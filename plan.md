@@ -238,27 +238,25 @@ Decisions the spec leaves to the plan:
 - New, `ctadl-query-diff/src/parse.rs`: `notification_row_canonical` — two notifications
   that differ in key order at two depths give one string; two that differ in the order of an
   array inside a property give two. `status_row_absent_exit_code` — absent and `0` differ.
-- Changed, `ctadl-query-diff/src/tests.rs`: `doc()` (`:70`) takes optional invocations.
-  `small_diff_text` (`:162`) expects `notifications: A 0, B 0` and `invocations: A 0, B 0`
-  after the results section. `json_matches_text` (`:292`) also checks
-  `notifications_differ` and `invocations_differ`.
-- New, `ctadl-query-diff/src/tests.rs`:
-  `notifications_are_a_multiset` — reordered notifications are identical; the same
-  notifications split over two invocations, and over two runs, are identical; one written
-  twice in B is `[A 1, B 2]` under `more in B`.
-  `notification_text_and_arguments_ignored` — changing both is identical.
-  `notification_change_reported` — a changed `level` gives one notification more in A and
-  one more in B, no result rows, first line `DIFFERENT`.
-  `status_compared` — `executionSuccessful` flipped, `exitCode` changed, `exitCode` absent
-  against `0`, and no invocation against one are each `DIFFERENT` with only invocation rows;
-  absent against absent is identical.
-  `sections_text` — the exact text of a report with one differing notification and one
-  differing status, in the form of D3.
-  `limit_bounds_each_section` — with `limit: 1` and two differing rows per side in each of
-  results, notifications and statuses, each side of each section shows one row and
-  `1 not shown`; `limit: 0` shows none and is still `DIFFERENT`.
-  `endpoints_only_keeps_notifications` — with `endpoints_only`, a differing notification and
-  a differing status are still reported.
+- Existing tests of `ctadl-query-diff/src/tests.rs`, widened: `doc()` (`:70`) takes
+  optional invocations.
+  `reordered_and_renumbered_is_identical` (`:119`): both files get two notifications; B has
+  them reversed, with changed `message.text` and `message.arguments`, and split over two
+  invocations with equal status. Still identical.
+  `duplicate_counts` (`:151`) also writes a notification twice in B: `[A 1, B 2]` under the
+  notifications' `more in B`.
+  `small_diff_text` (`:162`): A and B also differ in one notification's `level` and in
+  `exitCode`, so the expected text is the whole report in the form of D3, both new sections
+  included.
+  `limit_bounds_samples` (`:252`): the files also differ in two notifications and two
+  statuses per side; each side of each section shows `min(limit, n)` rows, and `limit: 0`
+  is still not identical.
+  `json_matches_text` (`:292`) also checks `notifications_differ` and `invocations_differ`.
+  `endpoints_only` (`:314`): with the flag, a differing notification and a differing status
+  are still reported.
+- New, `ctadl-query-diff/src/tests.rs`: `status_compared` — `executionSuccessful` flipped,
+  `exitCode` changed, `exitCode` absent against `0`, and no invocation against one are each
+  `DIFFERENT` with only invocation rows; absent against absent is identical.
 - Existing, still passing unchanged: the rest of `tests.rs`, `diff-report`'s tests, and
   `cargo test -p ctadl-ascent --test integration diff_query` (in particular `renumbered_ids`
   and `self_identical`; see Phase 0). If one of them now reports a notification or status
@@ -303,18 +301,19 @@ printer shows them. Files whose steps have neither compare exactly as before.
   to `call-arg(13, 0).f` (the instruction id), and its `other` property changed.
   `bad_inputs_error` (`:863`) gains a step `taintVertex` of `["x"]` and a step `callee` of
   `3`, each an `Error::Property` naming the key.
-- New, `ctadl-query-diff/src/tests.rs`:
-  `step_properties_compared` — two files equal but for one step's `taintVertex` report one
-  result more in A and one more in B; the same for `callee`; a step with the property
-  against the same step without it is reported too.
-  `step_instruction_id_ignored` — `call-arg(12, 0)` against `call-arg(99, 0)` on a step is
-  identical.
-  `step_properties_endpoints` — with `endpoints_only`, a changed interior `taintVertex` is
-  identical and a changed first-step `taintVertex` or last-step `callee` is reported.
-  `step_properties_printed` — a differing row contains
-  `"properties":{"taintVertex":"call-arg(_, 0)","callee":"snk"}` inside its step, and a step
-  with neither prints no `properties`.
-  `bad_step_property_is_error` — `diff_query` returns `ErrorKind::Parse` for the file.
+- Existing tests of `ctadl-query-diff/src/tests.rs`, widened: `step` (`:10`) takes optional
+  step properties.
+  `reordered_and_renumbered_is_identical` (`:119`) puts `taintVertex` `call-arg(12, 0)` and a
+  `callee` on the steps of A, and `call-arg(99, 0)` in B: still identical.
+  `small_diff_text` (`:162`) puts both properties on the differing step, so its expected
+  text pins `"properties":{"taintVertex":"call-arg(_, 0)","callee":"snk"}` inside that step
+  and no `properties` on the others.
+  `endpoints_only` (`:314`) gains: a changed interior `taintVertex` is identical with the
+  flag, and a changed first-step `taintVertex` or last-step `callee` is reported with it.
+  `errors_are_errors` (`:341`) gains a file whose step `callee` is `3`: `ErrorKind::Parse`.
+- New, `ctadl-query-diff/src/tests.rs`: `step_properties_compared` — two files equal but
+  for one step's `taintVertex` report one result more in A and one more in B; the same for
+  `callee`; a step with the property against the same step without it is reported too.
 - Existing, still passing unchanged: every test of `tests.rs` written before this phase
   (their steps have no properties), and
   `cargo test -p ctadl-ascent --test integration diff_query` (real output has none either).
@@ -330,49 +329,60 @@ printer shows them. Files whose steps have neither compare exactly as before.
 Depends on: 3, 4.
 
 **What.** Tests only. On the `ties.c` SARIF of every profile, edits that change nothing
-compared report nothing, and edits that do are reported as exactly that.
+compared report nothing, and edits that do are reported as exactly that. The existing tests
+are widened to cover the new edits wherever one already makes the same kind of edit; a new
+test is written only for an edit no existing test makes.
 
 **Files.**
-- `ctadl-ascent/tests/integration/diff_query.rs` — new helpers and tests below; the module
-  comment (`:1`) lists the new edits. `step_key` (`:153`) is not changed.
-- `ctadl-ascent/tests/integration/cli.rs` — one new process test.
+- `ctadl-ascent/tests/integration/diff_query.rs` — the changes below; the module comment
+  (`:1`) lists the new edits. `step_key` (`:153`) is not changed.
+- `ctadl-ascent/tests/integration/cli.rs` — one more case in an existing test.
 
-**Tests.** New, `ctadl-ascent/tests/integration/diff_query.rs`, each over `PROFILES`, each
-first asserting with `assert_changed` that its edit changed the file:
-- Helpers: `notifications_mut(doc)` (the `toolExecutionNotifications` of
-  `runs[0].invocations[0]`); `assert_only(report, section, in_a, in_b)`, which asserts the
-  named section's totals and that the other two sections have none;
-  `with_step_props(doc)`, which gives every step of every flow
+**Tests.** Existing tests of `ctadl-ascent/tests/integration/diff_query.rs`, widened:
+- `assert_reported` (`:195`) also asserts that the report has no differing notification and
+  no differing status. So every existing "reported as exactly that" test (`deleted_result`,
+  `duplicated_result`, `swapped_steps`, `changed_line`, `endpoints_only`) now also checks
+  that a result edit touches nothing else. `assert_identical` (`:179`) needs no change:
+  `identical()` covers all three.
+- `shuffle` (`:296`) also shuffles `runs[0].invocations[0].toolExecutionNotifications`,
+  under the key `notifications`; `shuffled_arrays` (`:504`) adds `notifications` to the keys
+  it requires to have been reordered. This is the reordered-notifications test.
+- `change_messages` (`:628`) also replaces a message's `arguments`, and `changed_messages`
+  (`:654`) applies it to the whole run, not only its results, and asserts that it changed at
+  least one message under `invocations`. This is the changed-notification-text test.
+- A new helper `with_step_props(doc)` gives every step of every flow
   `properties: {"taintVertex": "call-arg(<1000 + k>, <k % 3>).f<k>", "callee": "callee_<k>"}`
-  for a running count `k`, so every step differs.
-- `notifications_reordered` — a seeded permutation of the notifications is identical, with
-  and without `--endpoints-only`.
-- `notification_text_changed` — every notification's `message.text` and
-  `message.arguments` replaced is identical.
-- `notification_level_changed` — for each notification in turn, `level` set to `warning`:
-  one notification more in A and one more in B, nothing else. Equal notifications exist
-  (three `CTADL0111.call-without-body`), so assert the A row's `count_a == count_b + 1`,
-  not `(1, 0)`.
-- `notification_property_changed` — for each notification, one number in its `properties`
-  increased: the same assertion. Assert every profile has a notification with a property.
-- `status_changed` — `executionSuccessful` set to `false`: one status more in A and one
-  more in B, nothing else; the same for `exitCode` set to `1`, and for `exitCode` removed.
-- `step_props_renumbered_ids` — A is `with_step_props(base)`; B is A with every
-  `call-arg(<id>,` in a step property rewritten to `<id> + 7`: identical. Skipped for a
-  profile without flows, asserted against `has_flows` as `swapped_steps` does (`:732`).
-- `step_vertex_changed`, `step_callee_changed` — for each result with a flow, the formal of
-  its first step's `taintVertex`, or its first step's `callee`, changed: one result more in
-  A and one more in B, nothing else.
-- `endpoints_only_step_props` — for each `ENDPOINTS_RULE` result with three or more steps:
-  an interior step's `taintVertex` changed is reported without `--endpoints-only` and
+  for a running count `k`, so every step differs. `shuffled_arrays`,
+  `renumbered_logical_locations` (`:547`), `changed_messages`, `swapped_steps` (`:712`) and
+  `endpoints_only` (`:771`) each run over two bases, the real SARIF and
+  `with_step_props` of it, written to a temporary file. Their bodies do not change otherwise:
+  `step_key` already keeps a step's properties, so `swapped_steps` and the interior-step
+  replacement and swap of `endpoints_only` now move step properties too.
+- `endpoints_only` gains, on the `with_step_props` base, for each flow of three or more
+  steps: the interior step's `taintVertex` changed is reported without the flag and
   identical with it; the last step's `taintVertex` changed is reported with it.
-- Existing, still passing unchanged: every other test of the file.
 
-New, `ctadl-ascent/tests/integration/cli.rs`: `diff_query_notification_difference_exit_1` —
-the `xfer.c` SARIF (`diff_query_file`, `:1540`) against a copy with one notification's
-`level` changed exits 1 with first line `DIFFERENT`, as text and as `--json`
-(`"result":"DIFFERENT"`, `"results_differ":0`, `"notifications_differ":2`); a copy with only
-`message.text` changed exits 0.
+New tests, for edits no existing test makes, each over `PROFILES` and each first asserting
+with `assert_changed` that its edit changed the file:
+- `changed_notification` — for each execution notification in turn, `level` set to
+  `warning`, then one number in its `properties` increased: each is one notification more in
+  A and one more in B, and no result or status row. Equal notifications exist (three
+  `CTADL0111.call-without-body`), so assert the A row's `count_a == count_b + 1`, not
+  `(1, 0)`. Assert every profile has a notification with a property.
+- `changed_status` — `executionSuccessful` set to `false`, `exitCode` set to `1`, and
+  `exitCode` removed: each is one status more in A and one more in B, and no result or
+  notification row.
+- `changed_step_property` — on the `with_step_props` base, for each result with a flow: the
+  formal of its first step's `taintVertex` changed, then its first step's `callee` changed,
+  are each reported through `assert_reported` as 1 and 1; every `call-arg(<id>,` in a step
+  property rewritten to `<id> + 7` is identical. Counted against `has_flows` as
+  `swapped_steps` does (`:732`). `renumbered_ids` (`:601`) cannot cover this: it compares
+  two real indexes, and real output has no step properties yet.
+
+`ctadl-ascent/tests/integration/cli.rs`: `diff_query_exit_independent_of_limit_and_json`
+(`:1617`) gains a third file beside `sarif` and `removed`: the fixture with one
+notification's `level` changed, expected to exit 1 with `DIFFERENT` under every flag
+combination. `sarif_with_a_result_removed` (`:1561`) becomes a helper that takes the edit.
 
 **Gate.**
 
@@ -436,8 +446,8 @@ behavior changes. None of them cites a number from the spec or this plan.
 | `ctadl-query-diff/src/lib.rs` | module comment, export | 3 |
 | `ctadl-query-diff/src/render.rs` | a step's `properties` | 4 |
 | `ctadl-query-diff/src/tests.rs` | new and changed tests | 3, 4 |
-| `ctadl-ascent/tests/integration/diff_query.rs` | metamorphic tests | 5 |
-| `ctadl-ascent/tests/integration/cli.rs` | one exit-code test | 5 |
+| `ctadl-ascent/tests/integration/diff_query.rs` | existing metamorphic tests widened, three new | 5 |
+| `ctadl-ascent/tests/integration/cli.rs` | one more case in an existing test | 5 |
 | `docs/debugging.md`, `docs/spec.md` | what is compared | 6 |
 | `ctadl-ascent/src/main.rs` | help text only | 6 |
 
