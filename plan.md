@@ -314,8 +314,8 @@ printer shows them. Files whose steps have neither compare exactly as before.
 - New, `ctadl-query-diff/src/tests.rs`: `step_properties_compared` — two files equal but
   for one step's `taintVertex` report one result more in A and one more in B; the same for
   `callee`; a step with the property against the same step without it is reported too.
-- Existing, still passing unchanged: every test of `tests.rs` written before this phase
-  (their steps have no properties), and
+- Existing, still passing unchanged: the tests of `tests.rs` not named above (their steps
+  have no properties), and
   `cargo test -p ctadl-ascent --test integration diff_query` (real output has none either).
 
 **Gate.**
