@@ -123,7 +123,8 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
   and instruction ids differ, compare `IDENTICAL`, with and without `--endpoints-only`, in
   every profile. This holds for a program whose source or sink is at a call site with
   several callees.
-- R16. **Proofs.** `sarif-canon` and its Verus theorems do not change.
+- R16. **Theorems.** The statements of `sarif-canon`'s Verus theorems do not change, and they
+  still verify. Its code and proofs may change.
 
 **Tests and documents**
 
@@ -205,7 +206,9 @@ The canonical step keeps its one optional atom for the callee
 (`ctadl-query-diff/src/parse.rs:228`) reads `callees` and `summarized` in place of `callee`.
 When the step has neither, the atom is absent. Otherwise the atom is the text of a JSON
 object with the keys the step has: `callees` as the list sorted with duplicates dropped,
-`summarized` as written. So `sarif-canon` is untouched (R16). The set comparison of R12 is
+`summarized` as written. So the canonical step needs no new field and no new sorting proof
+(R16); its field is renamed and its comment (`types.rs:133`) restated for what the atom now
+holds. The set comparison of R12 is
 the parser's, covered by its tests, not by the proofs; the execution notifications are
 canonicalized the same way. `render.rs:99` prints the object's keys back under `properties`.
 
