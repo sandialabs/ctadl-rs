@@ -16,6 +16,7 @@ No code, comment, help text or document may cite a number from the spec or from 
 | 2 | 2, 3 | 2 is code and proofs inside `sarif-canon`; 3 is notifications and statuses inside `ctadl-query-diff`; disjoint files |
 | 3 | 4 | the parser and printer read the step properties; needs 2's comparison, and 3's `parse.rs` and `tests.rs` |
 | 4 | 5, 6 | 5 is the metamorphic tests in `ctadl-ascent/tests`; 6 is documents and help text; disjoint files |
+| 5 | 7 | measures the finished branch on TaintBench; changes no code |
 
 Phase 1 changes the step types, so it must also touch every constructor of a step, including
 three lines of `ctadl-query-diff/src/parse.rs`; that is why Phase 3 waits for it although it
@@ -439,6 +440,56 @@ behavior changes. None of them cites a number from the spec or this plan.
     grep -nE '\b(R|D|P)[0-9]+\b|Phase [0-9]' docs/debugging.md ctadl-ascent/src/main.rs   # no new hit
     cargo fmt --all -- --check && cargo clippy --workspace -- -Dwarnings
 
+## Phase 7: TaintBench, run twice (R10)
+
+Depends on: 5, 6 (it measures the finished branch).
+
+**What.** On real Android apps, two independent runs of `ctadl` on the same inputs give query
+outputs that `diff-query` marks `IDENTICAL`, now that notifications, statuses and step
+properties are compared. Measure how long `diff-query` takes and how much memory it uses.
+No code changes; the results go in this phase's "As built" note, which is the commit.
+
+**Inputs.** The 38 apps of `~/proj/ct-bench/taintbench/apps/<app>/`, each with `app.json`
+(the APK's URL and SRI hash) and `model.json`. That checkout is read only: nothing is built
+or written in it. Each APK is fetched into the Nix store by its hash
+(`nix store prefetch-file --json --hash <sri> <url>`), which finds the copy already there.
+`ctadl` is the release build of this branch (`cargo build --release -p ctadl-ascent --bin
+ctadl`), in this phase's own target directory.
+
+**Steps.** For each app, twice (runs `r1` and `r2`), each run with its own
+`XDG_STATE_HOME` under `$TMPDIR`, the steps `cargo xtask taintbench` uses
+(`ct-bench/xtask/src/taintbench.rs:282`):
+
+    ctadl import -l apk -n <app>_tb <apk>
+    ctadl index <app>_tb -m model.json
+    ctadl query <app>_tb -m model.json -o <profile>.sarif --sarif-profile <profile>
+
+with `<profile>` each of `human`, `agent`, `machine` and `debug` from the same index. Then,
+for each app and profile:
+
+    ctadl diff-query r1/<profile>.sarif r2/<profile>.sarif
+    ctadl diff-query --endpoints-only r1/<profile>.sarif r2/<profile>.sarif
+
+Apps run one at a time, each `ctadl` command under the `memory-guard` skill's
+`memguard.sh` (`xbot_android_samp` peaked at 5.1 GB and `remote_control_smack` took about two
+minutes in the 2026-09-22 timings, `ct-bench/taintbench-timing-20260922.tsv`). An app whose
+import, index or query fails or is killed is recorded with the failure and skipped; it is not
+a `diff-query` finding.
+
+**Measured, per app and profile:** the verdict and exit code of each `diff-query`; the
+result, notification and invocation counts it prints; its wall time and peak memory footprint
+(`/usr/bin/time -l`); the SARIF size. Kept as a TSV under `$TMPDIR`, summarized in the note.
+
+**Gate.**
+- Every app that queried in both runs gives `IDENTICAL` and exit 0 in every profile, with and
+  without `--endpoints-only`.
+- `git status --short` in `~/proj/ct-bench` is unchanged by the phase.
+
+If an app gives `DIFFERENT`, stop and report its differing rows and which section they are
+in. It is either `ctadl` not being deterministic run to run (a finding about `index` or
+`query`, outside this change) or `diff-query` comparing something it should not; telling
+which is the user's call, and no code changes in this phase.
+
 ## Files that change
 
 | File | Change | Phase |
@@ -482,6 +533,8 @@ names the proofs without saying what a step holds.
 - `ctadl diff-query a.sarif a.sarif` on a real query output prints `IDENTICAL` and the three
   count lines, and exits 0 (R10, R11).
 - No code, comment, help text or document cites a number from `spec.md` or this plan (R15).
+- On TaintBench, two runs of the branch's `ctadl` give `IDENTICAL` query outputs for every
+  app that ran, in every profile, with and without `--endpoints-only` (Phase 7).
 
 ## Deferred
 
