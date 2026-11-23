@@ -2,20 +2,10 @@
 
 Source: `intent.md`, `spec.md`. This orders the work of writing `taintVertex`, and `callee` or
 `summarized`, on each step and of reading them in `diff-query`. R*/D* numbers are the spec's;
-the spec wins where the two disagree, except for the corrections below. Each phase builds,
+the spec wins where the two disagree. Each phase builds,
 passes the gate named in it, and is one commit.
 
 No code, comment, help text or document may cite a number from the spec or from this plan.
-
-## Corrections to the spec
-
-- P1. **Which name a site's callees are sorted by.** D2 sorts by `facts.id_to_name`. The name
-  that is written is `source_data.id_to_name`, which starts as a copy of it
-  (`ctadl-ascent/src/query_engine/formatter.rs:2762`) and which source info then overwrites
-  for functions it knows (`formatter.rs:2274`). If the two ever differ, "the callee whose name
-  sorts first" (R7, R9) is not the first of the names written. This plan assumes the sort is
-  by the name that is written, so the map is built after `formatter.rs:2765`; nothing reads
-  it earlier.
 
 ## Order
 
@@ -159,7 +149,7 @@ properties are not written yet.
   `endpoint_callee` from `ctx.facts.call` and the name map. Sort each site's list by name
   (compare borrowed names; a function with no name compares as `func#<id>`), then drop
   entries whose name repeats. Build it after `formatter.rs:2765`, from
-  `source_data.id_to_name` (P1). One entry per row of `facts.call`; no other copy of the
+  `source_data.id_to_name`. One entry per row of `facts.call`; no other copy of the
   call list.
 - `formatter.rs:3286` — `endpoint_callee` takes the new map and returns the first callee,
   else `infunc`. Add `endpoint_callees`, returning the whole list (or `infunc` alone).
