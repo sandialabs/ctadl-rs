@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-sled  = { version = "0.34", optional = true }
+hashbrown = "0.16"
 serde = { version = "1",    optional = true, features = ["derive"] }
 parquet = "59"
 arrow = "59"
@@ -19,12 +19,10 @@ serde_json  = "1"
 serde       = { version = "1", features = ["derive"] }
 
 [features]
-sled  = ["dep:sled"]
 serde = ["dep:serde"]
 
 [[example]]
 name = "large"
-required-features = ["sled"]
 
 [[example]]
 name = "parquet_out"

@@ -8,10 +8,10 @@
 
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use super::cases::Case;
-use super::{class_name, h_java, manifest_for, smali_for, DRIVER_JAVA};
+use super::{DRIVER_JAVA, class_name, h_java, manifest_for, smali_for};
 
 /// The saved file, compiled in so a prebuilt xtask (the Nix check) has it without a source tree.
 pub const SAVED: &str = include_str!("../../tests/dex/opcodes-art.txt");

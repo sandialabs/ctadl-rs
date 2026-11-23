@@ -20,6 +20,8 @@ pub struct Metadata<'a> {
     pub(crate) us_data: &'a [u8],
     pub(crate) guid_data: &'a [u8],
     pub(crate) tables_data: &'a [u8],
+    /// The file offset of `tables_data`, the `#~` (or `#-`) stream.
+    tables_offset: usize,
     /// The `#Pdb` stream's header, which a portable PDB has.
     pub pdb: Option<PdbHeader>,
 
@@ -60,7 +62,7 @@ impl<'a> Metadata<'a> {
         let mut blob_data: &[u8] = &[];
         let mut us_data: &[u8] = &[];
         let mut guid_data: &[u8] = &[];
-        let mut tables_data: Option<&[u8]> = None;
+        let mut tables_data: Option<(&[u8], usize)> = None;
         let mut enc_tables = false;
         let mut minimal_delta = false;
         let mut pdb_data = None;
@@ -73,7 +75,7 @@ impl<'a> Metadata<'a> {
             }
             match stream.name.as_ref() {
                 "#~" | "#-" => {
-                    tables_data = Some(stream.data);
+                    tables_data = Some((stream.data, stream.offset));
                     enc_tables = stream.name == "#-";
                 }
                 "#Strings" => strings_data = stream.data,
@@ -85,7 +87,8 @@ impl<'a> Metadata<'a> {
             }
         }
 
-        let tables_data = tables_data.ok_or(Error::bad(metadata_offset, "no #~ or #- stream"))?;
+        let (tables_data, tables_offset) =
+            tables_data.ok_or(Error::bad(metadata_offset, "no #~ or #- stream"))?;
 
         // ImageReader.ReadTableHeap
         let mut cur = Cur::new(tables_data);
@@ -178,6 +181,7 @@ impl<'a> Metadata<'a> {
             us_data,
             guid_data,
             tables_data,
+            tables_offset,
             pdb,
             heap_sizes,
             valid,
@@ -223,6 +227,19 @@ impl<'a> Metadata<'a> {
 
     pub fn table_info(&self, table: Table) -> TableInfo {
         self.tables[table as usize]
+    }
+
+    /// The file offset of row `rid` (1-based) of `table`, and the row's size in bytes; `None`
+    /// for a row the tables stream does not hold.
+    pub fn row_file_span(&self, table: Table, rid: u32) -> Option<(u64, u32)> {
+        if rid == 0 || rid > self.rows_present(table) {
+            return None;
+        }
+        let info = self.tables[table as usize];
+        let offset = self.tables_offset as u64
+            + u64::from(info.offset)
+            + u64::from(rid - 1) * u64::from(info.row_size);
+        Some((offset, info.row_size))
     }
 
     /// How many of `table`'s rows lie within the tables stream. The header

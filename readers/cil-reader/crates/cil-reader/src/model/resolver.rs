@@ -16,14 +16,15 @@ use crate::raw::pe::{TargetRuntime, parse_runtime};
 use crate::raw::tables::*;
 use crate::token::{MetadataToken, TokenType};
 use std::borrow::Cow;
-use std::cell::UnsafeCell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Provides raw image bytes for assemblies (by reference, as Cecil's
 /// `IAssemblyResolver` gets them) and module files (by file name, for
-/// netmodules).
-pub trait AssemblyLoader {
+/// netmodules). `Sync`, so that an [`AssemblyCache`] over it can be shared by
+/// threads.
+pub trait AssemblyLoader: Sync {
     fn load_assembly(&self, name: &AssemblyName<'_>) -> Option<Vec<u8>>;
     fn load_file(&self, file_name: &str) -> Option<Vec<u8>>;
 }
@@ -76,7 +77,8 @@ impl AssemblyLoader for DirectoryLoader {
 
 // A cache entry owns the image bytes and the module reading them. The module
 // field is declared first so it drops before the bytes it borrows (Module has
-// no Drop, but keep the order defensive).
+// no Drop, but keep the order defensive). A name the loader can't find has an
+// entry with no module and no bytes.
 struct CacheEntry {
     module: Option<Module<'static>>,
     _bytes: Box<[u8]>,
@@ -85,10 +87,11 @@ struct CacheEntry {
 /// Owns every resolved module, handing out `&Module` references that live as
 /// long as the cache. Append-only: entries are never removed or replaced, and
 /// each lives in its own box, so returned references stay valid across later
-/// insertions (the `FrozenMap` pattern). Not `Sync`.
+/// insertions (the `FrozenMap` pattern). `Sync`: the map is behind a lock, held
+/// to look up or insert an entry, never while loading one.
 pub struct AssemblyCache<'l> {
     loader: &'l dyn AssemblyLoader,
-    entries: UnsafeCell<HashMap<String, Box<CacheEntry>>>,
+    entries: Mutex<HashMap<String, Box<CacheEntry>>>,
     /// Whether resolving through an assembly the loader can't find is an
     /// error rather than a null result.
     throws_on_miss: bool,
@@ -119,7 +122,7 @@ impl<'l> AssemblyCache<'l> {
     pub fn new(loader: &'l dyn AssemblyLoader) -> AssemblyCache<'l> {
         AssemblyCache {
             loader,
-            entries: UnsafeCell::new(HashMap::new()),
+            entries: Mutex::new(HashMap::new()),
             throws_on_miss: false,
         }
     }
@@ -148,7 +151,9 @@ impl<'l> AssemblyCache<'l> {
     /// use; cached by full name, as `DefaultAssemblyResolver` caches. `None`
     /// if the loader can't find it, or it isn't a valid image or an
     /// assembly's (Cecil's `ReadModule(file).Assembly` is null for a
-    /// netmodule). A miss is not cached: Cecil's resolver throws on one.
+    /// netmodule). A miss is cached too: resolution asks for a missing
+    /// assembly once per reference through it, and probing the directories
+    /// for it each time costs more than the rest of resolution.
     pub fn assembly(&self, name: &AssemblyName<'_>) -> Option<&Module<'_>> {
         self.entry(&format!("asm:{}", name.full_name()), || {
             self.loader.load_assembly(name)
@@ -164,28 +169,33 @@ impl<'l> AssemblyCache<'l> {
     }
 
     fn entry(&self, key: &str, load: impl FnOnce() -> Option<Vec<u8>>) -> Option<&Module<'_>> {
-        // SAFETY: entries are only inserted, never removed or overwritten;
-        // each CacheEntry is boxed so its address is stable; the returned
-        // reference points into the box, not the map. The map is only touched
-        // inside this short scope (loading happens with no live map borrow).
-        unsafe {
-            if let Some(entry) = (*self.entries.get()).get(key) {
-                return entry.module.as_ref();
-            }
+        if let Some(entry) = self.lock().get(key) {
+            return self.module(entry);
         }
-        let bytes: Box<[u8]> = load()?.into_boxed_slice();
+        let bytes: Box<[u8]> = load().unwrap_or_default().into_boxed_slice();
         // SAFETY of the lifetime cast: the module borrows `bytes`, which lives
         // in the same box and is never dropped or moved while the cache lives.
         let static_bytes: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(&bytes) };
-        let module = Module::read(static_bytes).ok();
         let entry = Box::new(CacheEntry {
-            module,
+            module: Module::read(static_bytes).ok(),
             _bytes: bytes,
         });
-        unsafe {
-            let map = &mut *self.entries.get();
-            map.entry(key.to_string()).or_insert(entry).module.as_ref()
-        }
+        // Another thread may have loaded the same key meanwhile; the first
+        // entry stays, so every caller gets the same module.
+        self.module(self.lock().entry(key.to_string()).or_insert(entry))
+    }
+
+    /// The module of an entry of this cache, for as long as the cache lives.
+    fn module(&self, entry: &CacheEntry) -> Option<&Module<'_>> {
+        // SAFETY: entries are only inserted, never removed or overwritten,
+        // and each CacheEntry is boxed, so the entry stays at its address for
+        // as long as the cache lives, after the lock is released; the
+        // reference points into the box, not the map.
+        unsafe { &*std::ptr::from_ref(entry) }.module.as_ref()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, HashMap<String, Box<CacheEntry>>> {
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

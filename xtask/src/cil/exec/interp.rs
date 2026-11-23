@@ -52,7 +52,7 @@ use cil_reader::flow::{
 use cil_reader::model::{MemberRefSig, MethodDef, TypeDef, TypeDefOrRef, TypeSig};
 use cil_reader::{Entity, MetadataToken, Module, TokenType};
 
-use super::value::{self, Base, Fault, Labels, Loc, Sh, Struct, Ty, Value, ARITHMETIC};
+use super::value::{self, ARITHMETIC, Base, Fault, Labels, Loc, Sh, Struct, Ty, Value};
 
 /// Why a call did not return normally.
 #[derive(Debug, Clone)]
@@ -1343,12 +1343,12 @@ impl<'m, 'd> Interp<'m, 'd> {
                 } => Some(Var::Arg(*n)),
                 _ => None,
             };
-            if let Some(v) = taken {
-                if !mf.address_taken().contains(v) {
-                    return bug(format!(
-                        "the address of {v} is taken, but not in address_taken"
-                    ));
-                }
+            if let Some(v) = taken
+                && !mf.address_taken().contains(v)
+            {
+                return bug(format!(
+                    "the address of {v} is taken, but not in address_taken"
+                ));
             }
             self.effect(fi, code, e)?;
         }
@@ -1522,12 +1522,11 @@ impl<'m, 'd> Interp<'m, 'd> {
             Transfer::Box(_) => {
                 // A fresh box holds the operand; the reference carries its labels too, since
                 // the frontend lowers `box` as a copy.
-                if let (Value::Ref(o), [old]) = (&v, vals.as_slice()) {
-                    if *old != v {
-                        if let Some(SObj::Boxed(content)) = self.sheap.get_mut(*o) {
-                            *content = operand.clone();
-                        }
-                    }
+                if let (Value::Ref(o), [old]) = (&v, vals.as_slice())
+                    && *old != v
+                    && let Some(SObj::Boxed(content)) = self.sheap.get_mut(*o)
+                {
+                    *content = operand.clone();
                 }
                 Sh::of(operand.labels.clone())
             }

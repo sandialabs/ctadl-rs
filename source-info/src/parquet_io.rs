@@ -256,12 +256,21 @@ pub fn write_parquet(
     spans: &[Span],
     file_spans: &[FileSpan],
 ) -> Result<()> {
-    write_metadata_file(dir, metadata)?;
-    write_artifacts_file(dir, artifacts)?;
-    write_files_file(dir, files)?;
-    write_spans_file(dir, spans)?;
-    write_file_spans_file(dir, file_spans)?;
-    Ok(())
+    // The span and file-span tables are usually much the largest, and each file is independent
+    // of the others, so those two are written on their own threads while this one writes the rest.
+    std::thread::scope(|s| {
+        let spans = s.spawn(|| write_spans_file(dir, spans));
+        let file_spans = s.spawn(|| write_file_spans_file(dir, file_spans));
+        let rest = write_metadata_file(dir, metadata)
+            .and_then(|()| write_artifacts_file(dir, artifacts))
+            .and_then(|()| write_files_file(dir, files));
+        let join = |h: std::thread::ScopedJoinHandle<'_, Result<()>>| {
+            h.join().unwrap_or_else(|p| std::panic::resume_unwind(p))
+        };
+        let spans = join(spans);
+        let file_spans = join(file_spans);
+        rest.and(spans).and(file_spans)
+    })
 }
 
 /// Convenience wrapper: serialize a `SourceInfo` to `dir`.

@@ -11,7 +11,6 @@ fn main() {
         hash_len: 32,
         version: 1,
     };
-    source_info::init_db(sled::open("/tmp/source_info_large").expect("sled error"));
     let mut builder = SourceInfoBuilder::new(metadata);
 
     let key1 = ArtifactKey {

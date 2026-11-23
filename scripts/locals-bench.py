@@ -11,7 +11,7 @@ What is reported, per configuration:
 
   * store bytes    -- `LocalsIndCommon::heap_report()` (logged at DEBUG by the index phase).
                       Cross-checked against a counting allocator by
-                      `cargo bench -p ctadl-ascent --bench locals_trie`: accurate to <1% for
+                      `cargo bench -p ctadl-index --bench locals_trie`: accurate to <1% for
                       the whole store, so it is used here as the per-structure number that
                       process-level memory cannot provide.
   * fixpoint time  -- wall time of the SCC containing the `locals` rules, from Ascent's own

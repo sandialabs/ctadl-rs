@@ -38,7 +38,11 @@ index_type!(
 
 pub trait DisplayInstr {
     fn display_raw(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error>;
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error>;
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error>;
 }
 
 impl<T: DisplayInstr> DisplayInstr for &T {
@@ -46,7 +50,11 @@ impl<T: DisplayInstr> DisplayInstr for &T {
         (**self).display_raw(f)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         (**self).display(f, cp)
     }
 }
@@ -56,7 +64,11 @@ impl DisplayInstr for Reg {
         write!(f, "{}", self.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        _cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "v{}", self.0)
     }
 }
@@ -66,7 +78,11 @@ impl DisplayInstr for TypeIdx {
         write!(f, "{}", self.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         let ty = cp
             .type_ids
             .get(self.0 as usize)
@@ -99,7 +115,11 @@ impl DisplayInstr for StringIdx {
         write!(f, "{}", self.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         let s = cp
             .strings
             .get_dex_string(self.0 as usize)
@@ -114,7 +134,11 @@ impl DisplayInstr for ProtoIdx {
         write!(f, "{}", self.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         let proto = cp
             .proto_ids
             .get(self.0 as usize)
@@ -129,7 +153,11 @@ impl DisplayInstr for MethodIdx {
         write!(f, "{}", self.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         let sig = cp
             .method_ids
             .get(self.0 as usize)
@@ -148,7 +176,11 @@ impl DisplayInstr for CallIdx {
         write!(f, "{}", self.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        _cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "call<{}>", self.0)
     }
 }
@@ -159,7 +191,11 @@ impl DisplayInstr for MethodHandleIdx {
     }
 
     /// Written as smali writes it: the handle's kind, `@`, then the field or method it names.
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         let Some(handle) = cp.method_handles.get(self.0 as usize) else {
             return write!(f, "<invalid_method_handle>");
         };
@@ -190,7 +226,11 @@ impl DisplayInstr for FieldIdx {
         write!(f, "{}", self.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         let fld = cp
             .field_ids
             .get(self.0 as usize)
@@ -251,7 +291,7 @@ impl DisplayInstr for Format10x {
     fn display(
         &self,
         _f: &mut Formatter<'_>,
-        _cp: &DexConstantPool,
+        _cp: &DexConstantPool<'_>,
     ) -> Result<(), std::fmt::Error> {
         Ok(())
     }
@@ -273,7 +313,11 @@ impl DisplayInstr for Format11x {
         write!(f, "{}", self.a.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}", DispArg(self.a, cp))
     }
 }
@@ -296,7 +340,11 @@ impl DisplayInstr for Format12x {
         write!(f, "{}, {}", self.a.0, self.b.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}, {}", DispArg(self.a, cp), DispArg(self.b, cp))
     }
 }
@@ -319,7 +367,11 @@ impl DisplayInstr for Format11n {
         write!(f, "{}, {}", self.a.0, self.lit)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}, {}", DispArg(self.a, cp), self.lit)
     }
 }
@@ -342,7 +394,11 @@ impl DisplayInstr for Format21s {
         write!(f, "{}, {}", self.a.0, self.lit)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}, {}", DispArg(self.a, cp), self.lit)
     }
 }
@@ -368,7 +424,11 @@ impl DisplayInstr for Format23x {
         write!(f, "{}, {}, {}", self.a.0, self.b.0, self.c.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(
             f,
             "{}, {}, {}",
@@ -397,7 +457,11 @@ impl DisplayInstr for Format31i {
         write!(f, "{}, {}", self.a.0, self.lit)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}, {}", DispArg(self.a, cp), self.lit)
     }
 }
@@ -422,7 +486,11 @@ impl DisplayInstr for Format31t {
         write!(f, "{}, {}", self.a.0, self.tgt)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}, {}", DispArg(self.a, cp), self.tgt)
     }
 }
@@ -452,7 +520,11 @@ impl DisplayInstr for Format51l {
         write!(f, "{}, {}L", self.a.0, self.lit)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(
             f,
             "{}, {}{}",
@@ -486,7 +558,11 @@ impl DisplayInstr for Format21h {
         write!(f, "{}, {}", self.a.0, self.lit)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}, {}", DispArg(self.a, cp), self.lit)
     }
 }
@@ -511,7 +587,11 @@ impl DisplayInstr for Format22b {
         write!(f, "{}, {}, {}", self.a.0, self.b.0, self.c)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(
             f,
             "{}, {}, {}",
@@ -540,7 +620,11 @@ impl<T: DisplayInstr + Copy> DisplayInstr for Format21c<T> {
         write!(f, "{}, {}", self.a.0, RawArg(self.idx))
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}, {}", DispArg(self.a, cp), DispArg(self.idx, cp))
     }
 }
@@ -563,7 +647,11 @@ impl DisplayInstr for Format21t {
         write!(f, "{}, {}", self.a.0, self.tgt)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}, {}", DispArg(self.a, cp), self.tgt)
     }
 }
@@ -588,7 +676,11 @@ impl<T: DisplayInstr + Copy> DisplayInstr for Format22c<T> {
         write!(f, "{}, {}, {}", self.a.0, self.b.0, RawArg(self.idx))
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(
             f,
             "{}, {}, {}",
@@ -617,7 +709,11 @@ impl DisplayInstr for Format22x {
         write!(f, "{}, {}", self.a.0, self.b.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}, {}", DispArg(self.a, cp), DispArg(self.b, cp),)
     }
 }
@@ -642,7 +738,11 @@ impl DisplayInstr for Format22s {
         write!(f, "{}, {}, {}", self.a.0, self.b.0, self.lit)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(
             f,
             "{}, {}, {}",
@@ -672,7 +772,11 @@ impl DisplayInstr for Format22t {
         write!(f, "{}, {}, {}", self.a.0, self.b.0, self.tgt)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(
             f,
             "{}, {}, {}",
@@ -702,7 +806,11 @@ impl DisplayInstr for Format31c {
         write!(f, "{}, {}", self.a.0, RawArg(self.idx))
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}, {}", DispArg(self.a, cp), DispArg(self.idx, cp),)
     }
 }
@@ -724,7 +832,11 @@ impl DisplayInstr for Format32x {
         write!(f, "{}, {}", self.a.0, self.b.0)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}, {}", DispArg(self.a, cp), DispArg(self.b, cp),)
     }
 }
@@ -744,7 +856,11 @@ impl DisplayInstr for Format10t {
         write!(f, "{}", self.off)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        _cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}", self.off)
     }
 }
@@ -764,7 +880,11 @@ impl DisplayInstr for Format20t {
         write!(f, "{}", self.off)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        _cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}", self.off)
     }
 }
@@ -786,7 +906,11 @@ impl DisplayInstr for Format30t {
         write!(f, "{}", self.off)
     }
 
-    fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        _cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{}", self.off)
     }
 }
@@ -837,7 +961,11 @@ impl<T: DisplayInstr + Copy> DisplayInstr for Format35c<T> {
         write!(f, "}}, {}", RawArg(self.idx))
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         // Smali/baksmali style for invokes / filled-new-array:
         //   {v0, v1, ...}, Lcls;->method(II)V
         write!(f, "{{")?;
@@ -861,7 +989,7 @@ impl<T: From<u16>> Format3rc<T> {
         let size: u32 = ((insns[0] >> 8) & 0xff).into();
         let idx: T = insns[1].into();
         let first: u32 = insns[2].into();
-        let args = (first..(first + size)).map(|r| Reg::from(r)).collect();
+        let args = (first..(first + size)).map(Reg::from).collect();
         (3, Self { idx, args })
     }
 }
@@ -881,7 +1009,11 @@ impl<T: DisplayInstr + Copy> DisplayInstr for Format3rc<T> {
         }
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         // Smali/baksmali style for invoke-*/range:
         //   {vX .. vY}, Lcls;->method(...)V
         match (self.args.first(), self.args.last()) {
@@ -943,7 +1075,11 @@ impl DisplayInstr for Format45cc {
         )
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         // Smali-style order:
         //   {regs}, method, proto
         write!(f, "{{")?;
@@ -975,7 +1111,7 @@ impl Format4rcc {
         let method_id = MethodIdx(insns[1].into());
         let first: u32 = insns[2].into();
         let proto_id = ProtoIdx(insns[3].into());
-        let args: Vec<Reg> = (first..(first + size)).map(|i| Reg::from(i)).collect();
+        let args: Vec<Reg> = (first..(first + size)).map(Reg::from).collect();
 
         (
             4,
@@ -996,7 +1132,11 @@ impl DisplayInstr for Format4rcc {
         write!(f, ", {}", RawArg(self.proto_id))
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         // Smali-style order:
         //   {vX .. vY}, method, proto
         match (self.args.first(), self.args.last()) {
@@ -1034,7 +1174,7 @@ impl DisplayInstr for FormatUnused {
     fn display(
         &self,
         _f: &mut Formatter<'_>,
-        _cp: &DexConstantPool,
+        _cp: &DexConstantPool<'_>,
     ) -> Result<(), std::fmt::Error> {
         Ok(())
     }
@@ -3147,7 +3287,11 @@ impl DisplayInstr for PayloadInstruction {
         }
     }
 
-    fn display(&self, f: &mut Formatter<'_>, _cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        _cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         // For payloads, display is the same as display_raw (no constant pool resolution needed)
         self.display_raw(f)
     }
@@ -3164,7 +3308,11 @@ impl DisplayInstr for Instruction {
         )
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         // const/high16: place 16-bit immediate in high 16 bits of 32-bit reg (low 16 zero).
         // Baksmali prints the full 32-bit value, not the raw immediate.
         if let Self::ConstHigh16(fmt) = self {
@@ -3554,7 +3702,11 @@ impl<'a> DisplayInstr for Format<'a> {
         }
     }
 
-    fn display(&self, f: &mut Formatter<'_>, cp: &DexConstantPool) -> Result<(), std::fmt::Error> {
+    fn display(
+        &self,
+        f: &mut Formatter<'_>,
+        cp: &DexConstantPool<'_>,
+    ) -> Result<(), std::fmt::Error> {
         match self {
             Format::Format10t(fmt) => fmt.display(f, cp),
             Format::Format10x(fmt) => fmt.display(f, cp),

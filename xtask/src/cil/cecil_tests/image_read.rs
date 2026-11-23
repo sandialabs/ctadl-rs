@@ -4,13 +4,13 @@
 //! assembly through [`Module`]. Skipped here: LocallyScopedConstantArray
 //! (portable PDB).
 
-use super::{read_resource, Test};
+use super::{Test, read_resource};
+use cil_reader::Module;
 use cil_reader::raw::heaps::GuidIndex;
 use cil_reader::raw::pe::module_attributes as attrs;
 use cil_reader::raw::pe::module_characteristics as mchar;
 use cil_reader::raw::tables::*;
-use cil_reader::raw::{parse_runtime, ModuleKind, PeImage, TargetArchitecture, TargetRuntime};
-use cil_reader::Module;
+use cil_reader::raw::{ModuleKind, PeImage, TargetArchitecture, TargetRuntime, parse_runtime};
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:17 (ImageSections)
 fn image_sections() {
@@ -185,11 +185,13 @@ fn metro_assembly() {
 fn windows_runtime_component_assembly() {
     let data = read_resource("winrtcomp.winmd");
     let module = Module::read(&data).unwrap();
-    assert!(module
-        .assembly_name()
-        .unwrap()
-        .unwrap()
-        .is_windows_runtime());
+    assert!(
+        module
+            .assembly_name()
+            .unwrap()
+            .unwrap()
+            .is_windows_runtime()
+    );
     let image = module.image();
     assert_eq!(image.subsystem_major, 6);
     assert_eq!(image.subsystem_minor, 2);
@@ -204,10 +206,12 @@ fn deterministic_assembly() {
     assert!(module.has_debug_header());
     let image = module.image();
     assert_eq!(image.debug_header.len(), 1);
-    assert!(image
-        .debug_header
-        .iter()
-        .any(|e| e.debug_type == cil_reader::raw::pe::image_debug_type::DETERMINISTIC));
+    assert!(
+        image
+            .debug_header
+            .iter()
+            .any(|e| e.debug_type == cil_reader::raw::pe::image_debug_type::DETERMINISTIC)
+    );
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:209 (Net471TargetingAssembly)
@@ -226,14 +230,18 @@ fn external_pdb_deterministic_assembly() {
     assert!(module.has_debug_header());
     let image = module.image();
     assert!(image.debug_header.len() >= 2);
-    assert!(image
-        .debug_header
-        .iter()
-        .any(|e| e.debug_type == idt::CODE_VIEW));
-    assert!(image
-        .debug_header
-        .iter()
-        .any(|e| e.debug_type == idt::DETERMINISTIC));
+    assert!(
+        image
+            .debug_header
+            .iter()
+            .any(|e| e.debug_type == idt::CODE_VIEW)
+    );
+    assert!(
+        image
+            .debug_header
+            .iter()
+            .any(|e| e.debug_type == idt::DETERMINISTIC)
+    );
 }
 
 // Test/Mono.Cecil.Tests/ImageReadTests.cs:253 (EmbeddedPdbDeterministicAssembly)
@@ -244,18 +252,24 @@ fn embedded_pdb_deterministic_assembly() {
     assert!(module.has_debug_header());
     let image = module.image();
     assert!(image.debug_header.len() >= 3);
-    assert!(image
-        .debug_header
-        .iter()
-        .any(|e| e.debug_type == idt::CODE_VIEW));
-    assert!(image
-        .debug_header
-        .iter()
-        .any(|e| e.debug_type == idt::DETERMINISTIC));
-    assert!(image
-        .debug_header
-        .iter()
-        .any(|e| e.debug_type == idt::EMBEDDED_PORTABLE_PDB));
+    assert!(
+        image
+            .debug_header
+            .iter()
+            .any(|e| e.debug_type == idt::CODE_VIEW)
+    );
+    assert!(
+        image
+            .debug_header
+            .iter()
+            .any(|e| e.debug_type == idt::DETERMINISTIC)
+    );
+    assert!(
+        image
+            .debug_header
+            .iter()
+            .any(|e| e.debug_type == idt::EMBEDDED_PORTABLE_PDB)
+    );
 }
 
 // Test/Mono.Cecil.Tests/ModuleTests.cs:249 (BadImageFormat analogue): a text

@@ -1,7 +1,7 @@
 //! Stage 2 of source/sink matching: map name-based matched elements → `QueryEndpoint`s.
 //!
-//! Stage 1 (`models::json::ModelGeneratorIngest`) matches MIR elements — function
-//! names, signatures, arity, regexes — and emits name-based
+//! Stage 1 (the Portcullis engine, [`crate::models::PortcullisMatcher`]) matches CIR elements —
+//! function names, signatures, arity, regexes — and emits name-based
 //! [`EndpointMatch`](crate::models::EndpointMatch) rows. Stage 2, here, consumes those rows
 //! together with the index facts and resolves them into concrete
 //! [`QueryEndpoint`](super::QueryEndpoint)s for the query engine.
@@ -14,14 +14,14 @@
 //!   [`QueryEndpoint::anchored_at_callsites_filtered`](super::QueryEndpoint::anchored_at_callsites_filtered)),
 //!   needing `facts.call`;
 //! - **sink wildcard expansion** — a wildcard sink port is expanded into the concrete
-//!   access paths that live on the argument's copy class (via [`super::compute_copy_alias`]),
+//!   paths that live on the argument's copy class (via [`super::compute_copy_alias`]),
 //!   needing `assign_like`.
 //!
 //! Consuming index facts here is therefore expected, not a smell.
 
 use std::collections::{BTreeSet, HashMap};
 
-use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
+use crate::codegen::RETURN_INDEX;
 use crate::facts::{self, FlowVariable, FlowVertex, Label, PackedInsnSiteId};
 use crate::index_engine::IndexFacts;
 
@@ -60,7 +60,7 @@ pub fn build_query_endpoints(
     use crate::models::FormalIndexTypeTag;
     let func_num_params = facts.compute_arg_arity();
 
-    // Field access paths that actually occur on each `(function, variable)` vertex
+    // Field paths that actually occur on each `(function, variable)` vertex
     // in the index graph, keyed by the vertex's *copy class* representative rather
     // than the vertex itself.
     //
@@ -88,6 +88,15 @@ pub fn build_query_endpoints(
     // `Variable(name)` base index to an existing versioned vertex (see the `Local` arm below).
     let mut local_vars: HashMap<facts::FunctionId, BTreeSet<FlowVariable>> = HashMap::new();
     for (func, v1, p1, v2, p2) in assign_like {
+        // A global's paths, in whichever function, are the global frame's vertex's.
+        for (v, p) in [(v1, p1), (v2, p2)] {
+            if v.is_global() {
+                vertex_paths
+                    .entry((facts::GLOBAL_FRAME, *v))
+                    .or_default()
+                    .insert(*p);
+            }
+        }
         vertex_paths
             .entry((*func, rep_of(*func, *v1)))
             .or_default()
@@ -111,7 +120,7 @@ pub fn build_query_endpoints(
         function: func_name,
         selector_ty,
         index: idx_opt,
-        path: ap,
+        path,
         label: label_str,
         direction,
         wildcard,
@@ -158,9 +167,8 @@ pub fn build_query_endpoints(
             FormalIndexTypeTag::Return => {
                 vec![FlowVariable::formal_index(RETURN_INDEX.into())]
             }
-            FormalIndexTypeTag::Global => {
-                vec![FlowVariable::formal_index(GLOBALS_INDEX.into())]
-            }
+            // `func_name` is the global frame's, and the endpoint stays there.
+            FormalIndexTypeTag::Global(g) => vec![FlowVariable::global(g)],
             FormalIndexTypeTag::AnyArgument => func_num_params
                 .get(&infunc)
                 .map(|n| {
@@ -212,7 +220,7 @@ pub fn build_query_endpoints(
             }
         };
 
-        // A wildcard sink port denotes the whole subtree beneath `ap` on the sink
+        // A wildcard sink port denotes the whole subtree beneath `path` on the sink
         // call's argument: it matches every concrete access path, rooted at that
         // argument, that extends the port. Sinks seed *backward* taint and the
         // formatter resolves each endpoint vertex to a graph node by exact `Path`
@@ -234,7 +242,7 @@ pub fn build_query_endpoints(
             // port path; wildcard expansion (if any) then happens per anchored vertex.
             let base = crate::query_engine::QueryEndpoint {
                 infunc,
-                vertex: FlowVertex(var, ap),
+                vertex: FlowVertex::new(var, path),
                 label: lbl.clone(),
                 direction,
                 call_site: None,
@@ -260,15 +268,22 @@ pub fn build_query_endpoints(
                 let mut seeded_port = false;
                 if let Some(paths) = vertex_paths.get(&(ep.infunc, rep_of(ep.infunc, ep.vertex.0)))
                 {
+                    // A sink on `q` already matches `q.#value` (see `search::value_path`), so a
+                    // path `q.#value` seeds the sink `q`, once.
+                    let mut paths: Vec<facts::Path> = paths
+                        .iter()
+                        .map(|p| strip_value(*p))
+                        .filter(|p| p.is_extension_of(&path))
+                        .collect();
+                    // In content order: endpoint order is the order of the query's seed rows.
+                    paths.sort_unstable_by(|a, b| a.content_cmp(b));
+                    paths.dedup();
                     for p in paths {
-                        if !p.is_extension_of(&ap) {
-                            continue;
-                        }
-                        if *p == ap {
+                        if p == path {
                             seeded_port = true;
                         }
                         out_eps.push((crate::query_engine::QueryEndpoint {
-                            vertex: FlowVertex(ep.vertex.0, *p),
+                            vertex: FlowVertex::new(ep.vertex.0, p),
                             ..ep.clone()
                         },));
                     }
@@ -283,5 +298,14 @@ pub fn build_query_endpoints(
         endpoints: out_eps,
         formals: out_formals,
         unresolved_functions,
+    }
+}
+
+/// `p` without a trailing [`PathSegment::Value`](ctadl_ir::cir::PathSegment::Value).
+fn strip_value(p: facts::Path) -> facts::Path {
+    let segments: Vec<_> = p.iter().cloned().collect();
+    match segments.split_last() {
+        Some((last, init)) if last.is_value() => facts::Path::from_accesses(init.iter().cloned()),
+        _ => p,
     }
 }

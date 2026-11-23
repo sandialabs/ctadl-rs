@@ -29,7 +29,7 @@
 //!   `cil-dump --flow` goldens (`xtask/cil-goldens/flow`); see [`flow`].
 //! - `cil:frontend`      — the CIL frontend (`ctadl-cil`): every corpus assembly
 //!   imported and put through the index's SSA pipeline, and the IR goldens
-//!   (`xtask/cil-goldens/mir`); see [`frontend`].
+//!   (`xtask/cil-goldens/cir`); see [`frontend`].
 //! - `cil:taint`         — the index's summaries of the exec fixtures' methods
 //!   against the flows the interpreter's runs show; see [`taint`]. Self-skips
 //!   without `flow-run`.
@@ -52,8 +52,8 @@
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 
@@ -72,9 +72,9 @@ pub mod taint;
 /// Failing inputs listed per check before the rest are summarized as a count.
 const MAX_LISTED: usize = 10;
 
-/// Run every cil-reader check. `goldens` is the committed goldens directory;
-/// `cecil` the Cecil checkout holding the corpus; `fixtures` the compiled
-/// fixtures.
+/// Run every cil-reader check but `cil:frontend`, which [`frontend_check`] runs. `goldens` is
+/// the committed goldens directory; `cecil` the Cecil checkout holding the corpus; `fixtures`
+/// the compiled fixtures.
 pub fn run_checks(
     goldens: Option<&Path>,
     cecil: Option<&Path>,
@@ -142,16 +142,34 @@ fn reader_checks(
             "cil:flow".to_string(),
             flow::run(&inputs, fixtures, goldens, work)?,
         ),
-        (
-            "cil:frontend".to_string(),
-            frontend::run(&inputs, fixtures, goldens, work)?,
-        ),
         ("cil:exec".to_string(), exec::run(fixtures, work)?),
         ("cil:taint".to_string(), {
             let ctadl = crate::regression::ctadl_bin()?;
             taint::run(&ctadl, fixtures, &taint::resolve_xtask_dir(), work)?
         }),
     ])
+}
+
+/// `cil:frontend`. It imports every assembly in the corpus, which takes longer than all the other
+/// cil checks together, so it is a regression task of its own and runs alongside them.
+pub fn frontend_check(
+    goldens: Option<&Path>,
+    cecil: Option<&Path>,
+    fixtures: Option<&Path>,
+    work: &Path,
+) -> Result<Vec<(String, Outcome)>> {
+    const NAME: &str = "cil:frontend";
+    let (Some(goldens), Some(cecil), Some(fixtures)) = (goldens, cecil, fixtures) else {
+        return Ok(vec![(
+            NAME.to_string(),
+            Outcome::Skip("needs the goldens, a Cecil checkout and compiled fixtures".to_string()),
+        )]);
+    };
+    let inputs = parity::corpus(cecil, Some(fixtures));
+    Ok(vec![(
+        NAME.to_string(),
+        frontend::run(&inputs, fixtures, goldens, work)?,
+    )])
 }
 
 fn skip_all(why: &str) -> Vec<(String, Outcome)> {
@@ -395,11 +413,13 @@ fn parallel_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Ve
     let results = Mutex::new(Vec::with_capacity(items.len()));
     std::thread::scope(|scope| {
         for _ in 0..jobs {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(item) = items.get(index) else { break };
-                let result = f(item);
-                results.lock().unwrap().push((index, result));
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(index) else { break };
+                    let result = f(item);
+                    results.lock().unwrap().push((index, result));
+                }
             });
         }
     });

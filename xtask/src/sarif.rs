@@ -93,13 +93,13 @@ pub fn validate(work: &Path, files: &[&Path]) -> Result<Option<String>> {
     // on the console, so read it there -- and only complain when it clearly
     // disagrees, so a change in wording cannot invent failures.
     let stdout = String::from_utf8_lossy(&out.stdout);
-    if let Some(scanned) = files_scanned(&stdout) {
-        if scanned < files.len() {
-            problems.push(format!(
-                "{CHECKSARIF} scanned {scanned} of the {} file(s) it was given",
-                files.len()
-            ));
-        }
+    if let Some(scanned) = files_scanned(&stdout)
+        && scanned < files.len()
+    {
+        problems.push(format!(
+            "{CHECKSARIF} scanned {scanned} of the {} file(s) it was given",
+            files.len()
+        ));
     }
 
     if problems.is_empty() {

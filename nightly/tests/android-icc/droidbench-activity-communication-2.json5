@@ -8,7 +8,7 @@
 // tracked as Phase 6+ string construction support.
 {
   apk: "ActivityCommunication2.apk",
-  model: "models/droidbench-activity-communication-2.json",
+  model: "models/droidbench-activity-communication-2.ctadl",
   expect_flow: true,
   expected_intent_pairs: 1,
   status: "phase6-plus",

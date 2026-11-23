@@ -1,0 +1,10 @@
+// G4: a global is never rebound. Its storage is the locations below it, so a write to the whole
+// variable is an error that says where to write instead.
+// expect-error: a global is never rebound
+var g;
+
+def Rebind(p) {
+s:
+  g = p;
+  return;
+}

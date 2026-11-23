@@ -6,9 +6,9 @@
 //! ExceptionInWriteDoesNotKeepLockOnFile. Not ported: NestedTypeForwarder and
 //! HasTypeReference.
 
-use super::{read_resource, Test};
-use cil_reader::raw::ModuleKind;
+use super::{Test, read_resource};
 use cil_reader::Module;
+use cil_reader::raw::ModuleKind;
 
 // Test/Mono.Cecil.Tests/ModuleTests.cs:25 (SingleModule)
 fn single_module() {

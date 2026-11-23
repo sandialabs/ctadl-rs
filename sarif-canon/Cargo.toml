@@ -1,0 +1,16 @@
+[package]
+name = "sarif-canon"
+version.workspace = true
+edition = "2024"
+
+# Verus's crates, pinned exactly as in multiset-diff/Cargo.toml: the version of the Verus that
+# `checks.verus` runs. A plain build erases the specs and proofs they carry.
+[dependencies]
+vstd = { version = "=0.0.0-2026-11-01-0251", default-features = false, features = ["std"] }
+verus_builtin = "=0.0.0-2026-11-01-0251"
+verus_builtin_macros = "=0.0.0-2026-11-01-0251"
+multiset-diff.workspace = true
+order-laws.workspace = true
+
+[lints]
+workspace = true

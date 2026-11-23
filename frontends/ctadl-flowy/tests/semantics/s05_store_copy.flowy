@@ -1,0 +1,41 @@
+// S5/S6: a store (non-empty destination) and a copy (empty destination); every suffix is
+// carried through a copy.
+def SuffixThroughCopy() {
+s:
+  x.f = source(S);
+  y = x;
+  z = y.f;
+  sink(z, S);
+  w = y.g;
+  errsink(w, S);
+  return;
+}
+
+// A store writes the location and what is under it.
+def StoreThenLoad() {
+s:
+  a.g = source(S);
+  y.f = a;
+  z = y.f.g;
+  sink(z, S);
+  return;
+}
+
+// An address destination `p.[8] = e` is `p = e.[-8]`: `p` gets `e`'s labels, and `e.f` is
+// `p.[8].f`.
+def AddressDestination() {
+s:
+  e = source(S);
+  e.f = source(T);
+  p.[8] = e;
+  sink(p, S);
+  r = p.[8].f;
+  sink(r, T);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: AddressDestination: sink(%S)#0 <- %S
+// expect: AddressDestination: sink(%T)#1 <- %T
+// expect: StoreThenLoad: sink(%S)#0 <- %S
+// expect: SuffixThroughCopy: sink(%S)#0 <- %S

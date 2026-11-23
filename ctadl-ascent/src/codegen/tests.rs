@@ -2,14 +2,13 @@ use super::*;
 
 use hashbrown::HashSet;
 
-use super::GLOBALS_INDEX;
 use crate::facts as fx;
 use crate::facts::{FlowVariable, FlowVertex, TaintEndpoint};
 use crate::index_engine::source_info::IndexSourceInfo;
 use crate::index_engine::{IndexFacts, taint_index};
 use crate::query_engine::{QueryEndpoint, QueryFacts, taint_analysis};
+use ctadl_ir::cir::builder::FunctionBuilder;
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::builder::FunctionBuilder;
 use ctadl_ir::ssa;
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Default)]
@@ -133,14 +132,14 @@ fn a_skipped_body_contributes_no_facts() {
         .get_function_id(fx::Function("G".into()))
         .unwrap();
 
-    // The signature survives: one declared parameter plus the globals and return auxiliaries.
+    // The signature survives: one declared parameter plus the return auxiliary.
     assert_eq!(
         facts
             .formal_param
             .iter()
             .filter(|(f, ..)| *f == g_id)
             .count(),
-        3
+        2
     );
     // The body does not. G's call to F was the program's only call site.
     assert!(
@@ -260,106 +259,69 @@ fn test_phi_instruction() {
     assert!(!result.summary.is_empty());
 }
 
-// Test Update instruction with field access
+// A field store `s.field = new_value` through a parameter.
 #[test]
 fn test_update_instruction() {
     let f = function_with_update();
     let mut f_ssa = f.clone();
-    log::trace!("Update function before transform: {f}");
+    log::trace!("store function before transform: {f}");
     ssa::transform(&mut f_ssa, false);
-    log::trace!("Update function after transform: {f_ssa}");
+    log::trace!("store function after transform: {f_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
     codegen_function(&f_ssa, &mut facts, &mut source_info);
     let result = taint_index(facts);
-    log::trace!("Update result: {:#?}", result);
+    log::trace!("store result: {:#?}", result);
     assert!(!result.summary.is_empty());
 }
 
-// Exercises `Update` codegen end-to-end: `q = update(p0, .field := p1); return q`. Unlike a
-// `Store`, an `Update` copies the whole `source` aggregate into `dest` in addition to writing the
-// field, so the summary must contain BOTH the field write (p1 -> ret.field) and the
-// whole-aggregate copy (p0 -> ret), the latter being unique to `Update`.
-#[test]
-fn test_real_update_instruction() {
-    let f = function_with_real_update();
-    let mut f_ssa = f.clone();
-    log::trace!("Real update before transform: {f}");
-    ssa::transform(&mut f_ssa, false);
-    log::trace!("Real update after transform: {f_ssa}");
-    let mut facts = IndexFacts::default();
-    let mut source_info = IndexSourceInfo::default();
-    codegen_function(&f_ssa, &mut facts, &mut source_info);
-    let result = taint_index(facts);
-    log::trace!("Real update summary: {:#?}", result.summary);
-
-    let f_id = source_info
-        .sites
-        .get_function_id(fx::Function("real_update".into()))
-        .unwrap();
-
-    // The field write p1 -> q.field, returned in q: (ret, .field) <- (formal 1, empty).
-    let has_field_flow = result
-        .summary
-        .iter()
-        .any(|(fid, dst_i, dst_p, src_i, src_p)| {
-            *fid == f_id && **dst_i == -1 && !dst_p.is_empty() && **src_i == 1 && src_p.is_empty()
-        });
-    assert!(
-        has_field_flow,
-        "expected p1 to flow to the returned aggregate's field"
-    );
-
-    // The whole-aggregate copy p0 -> q, returned in q: (ret, empty) <- (formal 0, empty). This flow
-    // exists only because `Update` copies the entire source aggregate; a `Store` would not.
-    let has_whole_copy = result
-        .summary
-        .iter()
-        .any(|(fid, dst_i, dst_p, src_i, src_p)| {
-            *fid == f_id && **dst_i == -1 && dst_p.is_empty() && **src_i == 0 && src_p.is_empty()
-        });
-    assert!(
-        has_whole_copy,
-        "expected the whole source aggregate p0 to flow to the returned aggregate (Update-specific)"
-    );
-}
-
-// Test that local variables flow into fields of globals, not globals index itself
+// A store of a parameter into a field of a global, `$g.field = p0`, is the summary row
+// `$g.field <- 0`, rooted at the global itself.
 #[test]
 fn test_local_to_global_field() {
-    let f = function_with_param_to_global_field();
+    let (globals, f) = function_with_param_to_global_field();
     let mut f_ssa = f.clone();
-    log::trace!("Local to global field function before transform: {f}");
     ssa::transform(&mut f_ssa, false);
-    log::trace!("Local to global field function after transform: {f_ssa}");
     let mut facts = IndexFacts::default();
     let mut source_info = IndexSourceInfo::default();
-    codegen_function(&f_ssa, &mut facts, &mut source_info);
+    super::codegen_function_with_globals(&f_ssa, &globals, &mut facts, &mut source_info);
+    let g = fx::GlobalId::new("g");
+    assert_eq!(
+        facts.globals.iter().map(|(id, ..)| *id).collect::<Vec<_>>(),
+        vec![g],
+        "the program's one global is declared for its import"
+    );
+    assert!(
+        facts
+            .formal_param
+            .iter()
+            .all(|(_, v, _)| v.as_formal().is_some_and(|i| *i >= -1)),
+        "only parameters and returns are formals: {:?}",
+        facts.formal_param
+    );
+    assert!(
+        facts
+            .assign
+            .iter()
+            .any(|(_, dst, _)| dst.0 == FlowVariable::global(g)),
+        "the store is an assign row whose destination is the global's vertex"
+    );
     let result = taint_index(facts);
-    log::trace!("Local to global field result: {:#?}", result);
-
-    // Check that local variable flows to global field, not globals index
     let f_id = source_info
         .sites
         .get_function_id(fx::Function("param_to_global_field".into()))
         .unwrap();
-
-    // The correct behavior is that param flows to global field
-    let has_bad_flow =
-        result
-            .summary
-            .iter()
-            .any(|(func_id, dst_index, dst_path, src_index, src_path)| {
-                *func_id == f_id
-                    && **src_index == 0
-                    && src_path.is_empty()
-                    && **dst_index == GLOBALS_INDEX
-                    && dst_path.is_empty()
-            });
-
+    let field = fx::Path::from_accesses([ctadl_ir::cir::PathSegment::field("field")]);
     assert!(
-        !has_bad_flow,
-        "Local variable should flow to a field of globals, not the globals index itself"
+        result.summary.contains(&(
+            f_id,
+            fx::Root::global(g),
+            field,
+            fx::Root::formal(0i16.into()),
+            fx::Path::empty()
+        )),
+        "the store `$g.field = p0` is the summary row `$g.field <- 0`: {:#?}",
+        result.summary
     );
 }
 
@@ -413,7 +375,7 @@ fn string_constant_call_argument_emits_const_fact_without_actual_param() {
             .iter()
             .all(|(_, formal, _)| **formal != 0)
     );
-    let FlowVertex(var, path) = &facts.const_str_assign[0].1;
+    let FlowVertex(var, path, ..) = &facts.const_str_assign[0].1;
     assert!(path.is_empty());
     assert_eq!(
         var.as_call_arg()
@@ -450,8 +412,8 @@ fn function_f() -> FunctionData {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_store(a.clone(), None, q);
-    b.create_assign_or_store(p.clone(), None, a);
+    b.create_assign(a.clone(), [Exp::from(q)]);
+    b.create_assign(p.clone(), [Exp::from(a)]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -486,7 +448,7 @@ fn function_j() -> FunctionData {
     let q = b.new_param_var(ParameterIdx::new(1));
 
     b.create_assign(a.clone(), vec![q.into(), param_b.into()]);
-    b.create_assign_or_store(p.clone(), None, a);
+    b.create_assign(p.clone(), [Exp::from(a)]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -555,8 +517,8 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let p = b.new_param_var(ParameterIdx::new(0));
     let q = b.new_param_var(ParameterIdx::new(1));
 
-    b.create_assign_or_store(a.clone(), None, q);
-    b.create_assign_or_store(p.clone(), None, a);
+    b.create_assign(a.clone(), [Exp::from(q)]);
+    b.create_assign(p.clone(), [Exp::from(a)]);
     b.create_ret(vec![p.into()]);
 
     f.verify().expect("Function doesn't verify");
@@ -564,13 +526,13 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
     let ss = SourceSinkQuery {
         source: TaintEndpoint {
             infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex(FlowVariable::formal_index(1i8.into()), fx::Path::empty()),
+            vertex: FlowVertex::new(FlowVariable::formal_index(1i8.into()), fx::Path::empty()),
             label: fx::Label("Net".into()),
             direction: fx::TaintDirection::Forward,
         },
         sink: TaintEndpoint {
             infunc: fx::Function(f.name.clone().into()),
-            vertex: FlowVertex(
+            vertex: FlowVertex::new(
                 FlowVariable::formal_index(RETURN_INDEX.into()),
                 fx::Path::empty(),
             ),
@@ -592,7 +554,7 @@ fn function_h() -> (FunctionData, SourceSinkQuery) {
 //   return x;
 // }
 fn function_with_phi() -> FunctionData {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "phi_func".to_string(),
@@ -636,15 +598,15 @@ fn function_with_phi() -> FunctionData {
 
     // True branch: x = a (using builder API)
     let mut true_builder = BasicBlockBuilder::new(&mut f.blocks[true_branch], &mut f.locals);
-    true_builder.create_assign_or_store(x.clone(), None, Exp::Variable(a));
+    true_builder.create_assign(x.clone(), [Exp::variable(a)]);
 
     // False branch: x = b (using builder API)
     let mut false_builder = BasicBlockBuilder::new(&mut f.blocks[false_branch], &mut f.locals);
-    false_builder.create_assign_or_store(x.clone(), None, Exp::Variable(b));
+    false_builder.create_assign(x.clone(), [Exp::variable(b)]);
 
     // Merge block will get phi node during SSA conversion (using builder API)
     let mut merge_builder = BasicBlockBuilder::new(&mut f.blocks[merge], &mut f.locals);
-    merge_builder.create_ret(vec![Exp::Variable(x)]);
+    merge_builder.create_ret(vec![Exp::variable(x)]);
 
     f.verify().expect("doesn't verify");
     f
@@ -656,7 +618,7 @@ fn function_with_phi() -> FunctionData {
 //   return s;
 // }
 fn function_with_update() -> FunctionData {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "update_func".to_string(),
@@ -685,68 +647,24 @@ fn function_with_update() -> FunctionData {
     // Create update statement using builder API: s.field = new_value
     builder.create_store(
         s_var.clone(),
-        ctadl_ir::mir::FieldRef::symbol("field"),
-        Exp::Variable(new_value.clone()),
+        ctadl_ir::cir::PathSegment::field("field"),
+        Exp::variable(new_value.clone()),
     );
 
     // Create return statement using builder API
-    builder.create_ret(vec![Exp::Variable(s_var)]);
+    builder.create_ret(vec![Exp::variable(s_var)]);
 
     f.verify().expect("doesn't verify");
     f
 }
 
-// def real_update(p0, p1) {
-//   q = update(p0, .field := p1);   // q is p0 with q.field set to p1
-//   return q;
-// }
-//
-// Exercises the `Update` instruction (a functional update: `dest` is a fresh copy of
-// `source` with one field overwritten), as opposed to `function_with_update`'s in-place `Store`.
-fn function_with_real_update() -> FunctionData {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
-
-    let mut f = FunctionData {
-        name: "real_update".to_string(),
-        return_type: ReturnType { arity: 1 },
-        ..Default::default()
-    };
-    f.params.push(ParameterType::SharedFields);
-    f.params.push(ParameterType::SharedFields);
-
-    let blocks = f.blocks.blocks_mut();
-    blocks.push(BasicBlockData::new(Some(Terminator::new_kind(
-        TerminatorKind::Goto {
-            targets: vec![BasicBlockIdx::new(1)].into(),
-        },
-    ))));
-
-    let body = blocks.push(BasicBlockData::new(None));
-    let mut builder = BasicBlockBuilder::new(&mut f.blocks[body], &mut f.locals);
-
-    let p0 = builder.new_param_var(ParameterIdx::new(0));
-    let p1 = builder.new_param_var(ParameterIdx::new(1));
-    let q = builder.new_local_var("q");
-
-    // q = update(p0, .field := p1)
-    builder.create_update(
-        q.clone(),
-        p0,
-        ctadl_ir::mir::FieldRef::symbol("field"),
-        Exp::Variable(p1),
-    );
-    builder.create_ret(vec![Exp::Variable(q)]);
-
-    f.verify().expect("doesn't verify");
-    f
-}
-
+// global g;
 // def param_to_global_field(p0) {
-//   globals.field = p0;
+//   g.field = p0;
 //   return;
 //}
-fn function_with_param_to_global_field() -> FunctionData {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+fn function_with_param_to_global_field() -> (Globals, FunctionData) {
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "param_to_global_field".to_string(),
@@ -765,26 +683,26 @@ fn function_with_param_to_global_field() -> FunctionData {
     // Create local variable and assign it a value
     let local_var = builder.new_param_var(ParameterIdx::new(0));
 
-    // Create globals access and update its field with local_var
-    let globals_var = builder.new_global_var();
+    // Declare the global `g` and update its field with local_var
+    let mut globals = Globals::default();
+    let globals_var = builder.new_global_var(globals.declare("g", None));
 
-    // This is the key assignment: globals.field = local_var
+    // This is the key assignment: g.field = local_var
     builder.create_store(
         globals_var.clone(),
-        ctadl_ir::mir::FieldRef::symbol("field"),
-        Exp::Variable(local_var.clone()),
+        ctadl_ir::cir::PathSegment::field("field"),
+        Exp::variable(local_var.clone()),
     );
 
-    // Return globals
     builder.create_ret(vec![]);
 
     f.verify().expect("doesn't verify");
-    f
+    (globals, f)
 }
 
 #[test]
 fn test_cap_algorithm() {
-    use ctadl_ir::mir::builder::BasicBlockBuilder;
+    use ctadl_ir::cir::builder::BasicBlockBuilder;
 
     let mut f = FunctionData {
         name: "cap_test".to_string(),
@@ -812,7 +730,7 @@ fn test_cap_algorithm() {
     let t3 = builder.new_local_var("t3");
     builder.create_load(t3.clone(), t2.clone(), "baz");
 
-    builder.create_ret(vec![Exp::Variable(t3)]);
+    builder.create_ret(vec![Exp::variable(t3)]);
 
     f.verify().expect("doesn't verify");
 
@@ -840,7 +758,7 @@ fn test_cap_algorithm() {
 /// that stopped seeing `new` would otherwise make RTA look brilliant instead of broken.
 #[test]
 fn rta_keeps_only_allocated_implementers() {
-    use ctadl_ir::mir::call::{
+    use ctadl_ir::cir::call::{
         CallObject, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
     };
 
@@ -869,7 +787,7 @@ fn rta_keeps_only_allocated_implementers() {
             )
         })
         .collect();
-    let vmt = VirtualMethodTable::Java {
+    let vmt = VirtualMethodTable::new(Dispatch::Java {
         methods,
         hierarchy,
         // `I` is an interface declaring one abstract `m()V`: the shape a functional
@@ -881,7 +799,7 @@ fn rta_keeps_only_allocated_implementers() {
             JavaSignature(desc.clone()),
         )],
         natives: Default::default(),
-    };
+    });
 
     // A function whose body is `x = new A; x.m()`.
     let mut f = FunctionData {
@@ -901,11 +819,14 @@ fn rta_keeps_only_allocated_implementers() {
     b.create_call(
         CallStyle::JavaCall {
             receiver: x,
-            cls: iface.clone(),
-            simple_name: m.clone(),
-            descriptor: desc.clone(),
-            dispatch: JavaDispatch::Interface,
-            super_start: None,
+            method: JavaMethodRef {
+                cls: iface.clone(),
+                simple_name: m.clone(),
+                descriptor: desc.clone(),
+                dispatch: JavaDispatch::Interface,
+                super_start: None,
+            }
+            .into(),
         },
         Vec::new(),
         Vec::new(),
@@ -958,8 +879,8 @@ fn rta_keeps_only_allocated_implementers() {
 mod ladder {
     use super::*;
     use crate::models::{DispatchModel, Disposition, ProgramModelMatches};
-    use ctadl_ir::mir::call::{
-        JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
+    use ctadl_ir::cir::call::{
+        Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
     };
 
     /// A hierarchy where `LI;->m()V` has `count` implementers, so the ladder has a target
@@ -980,7 +901,7 @@ mod ladder {
                 smallvec::smallvec![JavaClass("LI;".into())],
             );
         }
-        VirtualMethodTable::Java {
+        VirtualMethodTable::new(Dispatch::Java {
             methods,
             hierarchy,
             interfaces: vec![JavaClass("LI;".into())],
@@ -990,7 +911,7 @@ mod ladder {
                 JavaSignature("()V".into()),
             )],
             natives: Vec::new(),
-        }
+        })
     }
 
     fn key() -> SignatureKey {
@@ -1452,7 +1373,7 @@ mod ladder {
 
 mod super_resolution {
     use super::*;
-    use ctadl_ir::mir::call::{
+    use ctadl_ir::cir::call::{
         JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
     };
 
@@ -1462,7 +1383,7 @@ mod super_resolution {
         implementations: &[(&str, &str)],
         hierarchy: &[(&str, &[&str])],
     ) -> ClassHierarchyAnalysis {
-        let vmt = VirtualMethodTable::Java {
+        let vmt = VirtualMethodTable::new(Dispatch::Java {
             methods: implementations
                 .iter()
                 .map(|(cls, name)| {
@@ -1486,7 +1407,7 @@ mod super_resolution {
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        };
+        });
         ClassHierarchyAnalysis::new(&vmt, Default::default())
     }
 
@@ -1564,7 +1485,7 @@ mod super_resolution {
     /// The whole rung, at a call site: one `call` row, counted as an exact super.
     #[test]
     fn a_resolved_super_site_emits_one_edge() {
-        let vmt = VirtualMethodTable::Java {
+        let vmt = VirtualMethodTable::new(Dispatch::Java {
             methods: vec![
                 (
                     JavaClass("LA;".into()),
@@ -1588,7 +1509,7 @@ mod super_resolution {
             interfaces: Vec::new(),
             abstract_methods: Vec::new(),
             natives: Vec::new(),
-        };
+        });
 
         let mut f = FunctionData {
             name: "LB;->caller()V".to_string(),
@@ -1607,13 +1528,16 @@ mod super_resolution {
         b.create_call(
             CallStyle::JavaCall {
                 receiver: x,
-                // What the instruction names, and what CHA alone would resolve to both `LA;`
-                // and `LB;`.
-                cls: "LA;".into(),
-                simple_name: "m".into(),
-                descriptor: "()V".into(),
-                dispatch: JavaDispatch::Super,
-                super_start: Some("LA;".into()),
+                method: JavaMethodRef {
+                    // What the instruction names, and what CHA alone would resolve to both `LA;`
+                    // and `LB;`.
+                    cls: "LA;".into(),
+                    simple_name: "m".into(),
+                    descriptor: "()V".into(),
+                    dispatch: JavaDispatch::Super,
+                    super_start: Some("LA;".into()),
+                }
+                .into(),
             },
             Vec::new(),
             Vec::new(),

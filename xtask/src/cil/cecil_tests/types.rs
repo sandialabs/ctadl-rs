@@ -6,9 +6,9 @@
 //! (read the running framework's corlib; corlib-sensitive tests are pinned
 //! to the mdb mscorlib fixture instead where they matter).
 
-use super::{read_fixture, read_resource, Test};
-use cil_reader::model::{TypeDefOrRef, TypeSig};
+use super::{Test, read_fixture, read_resource};
 use cil_reader::Module;
+use cil_reader::model::{TypeDefOrRef, TypeSig};
 
 // Test/Mono.Cecil.Tests/TypeTests.cs:15 (TypeLayout)
 fn type_layout() {

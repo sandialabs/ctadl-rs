@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
 use crate::exec;
@@ -362,9 +362,8 @@ fn dispatch_split(programs: &[Value], biggest: &Value) -> Dispatch {
             interface_excess as f64 / excess_total as f64
         },
         in_cycles: n(&biggest["recursion"]["functions_in_nontrivial_sccs"]),
-        in_cycles_without_interfaces: biggest["recursion"]["without_interface_edges"]
-            ["functions_in_nontrivial_sccs"]
-            .as_u64(),
+        in_cycles_without_interfaces:
+            biggest["recursion"]["without_interface_edges"]["functions_in_nontrivial_sccs"].as_u64(),
     }
 }
 

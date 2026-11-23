@@ -1,16 +1,16 @@
-//! `cil:models`: the default .NET models (`ctadl-ascent/src/models/defaults/cil-index.jsonl`)
+//! `cil:models`: the default .NET models (`ctadl-ascent/src/models/defaults/cil-index.ctadl`)
 //! checked against what .NET does.
 //!
-//! **Which methods.** Every class a generator names in `parents` is listed by `model-run`
+//! **Which methods.** Every class a rule names as a `parent` is listed by `model-run`
 //! (`frontends/ctadl-cil/tools/ModelRun`), which spells each public method and constructor by
-//! reflection as the CIL frontend spells it. Those rows become a `VirtualMethodTable::Cil`, and
-//! the shipped file is matched against it by the loader `ctadl index` uses, so the methods
-//! checked are exactly the overloads the generators select, and the ports are the ones the
-//! loader decodes. A class that does not load, or lives in another assembly than the one named
-//! (the frontend canonicalizes through forwarders), fails, as does a generator that selects
-//! nothing. A `find: "dispatch"` generator is matched against a `callvirt` of every listed
-//! method, so it is held to the same spellings, but nothing calls it: it names a contract,
-//! not a method, and the `find: methods` entries it repeats are the ones checked by calling.
+//! reflection as the CIL frontend spells it. Those rows become a
+//! `VirtualMethodTable::new(Dispatch::Cil)`, and the shipped file is run against it as
+//! `ctadl index` runs it, so the methods checked are exactly the overloads the rules select, and
+//! the ports are the ones the engine emits. A class that does not load, or lives in another
+//! assembly than the one named (the frontend canonicalizes through forwarders), fails, as does a
+//! rule that selects nothing. A `dispatch` rule is matched against a `callvirt` of every listed
+//! method, so it is held to the same spellings, but nothing calls it: it names a contract, not a
+//! method, and the `propagation` rules it repeats are the ones checked by calling.
 //!
 //! **What they do.** `model-run` calls each selected method with marked arguments, many times,
 //! and reports two things: a *flow*, a marker from input `(i, p)` found at output `(j, q)` that
@@ -32,40 +32,43 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt::Write as _;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
+use ctadl_ascent::facts::{FormalIndex, RETURN_INDEX};
+use ctadl_ascent::models::portcullis::ast::{BodyItem, Literal, Rhs, Rule, Term};
 use ctadl_ascent::models::{
-    try_check_jsonl_models, DispatchKeys, FormalIndexTypeTag, ImportScope, MatchedFunctions,
-    ModelPort, ProgramMatchIndex, ProgramModelMatches, CIL_DEFAULT_MODELS,
+    DEFAULT_DSL_MODELS, DispatchKeys, FormalIndexTypeTag, ImportScope, ModelLoadReport, ModelPort,
+    PortcullisFile, PortcullisMatcher, PortcullisModelSet, PortcullisPhase, ProgramMatchIndex,
+    ProgramModelMatches,
 };
-use ctadl_ir::mir::builder::FunctionBuilder;
-use ctadl_ir::mir::call::{
-    CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, VirtualMethodTable,
+use ctadl_ir::cir::builder::FunctionBuilder;
+use ctadl_ir::cir::call::{
+    CallStyle, CilClass, CilMethod, CilSignature, CilSimpleName, Dispatch, FunctionNames,
+    VirtualMethodTable,
 };
-use ctadl_ir::mir::{
+use ctadl_ir::cir::{
     BasicBlockData, Exp, FunctionData, Functions, ParameterType, PathSegment, Program, ProgramInfo,
     Statement, StatementKind,
 };
 use serde::Deserialize;
-use serde_json::Value;
 
 use crate::regression::Outcome;
 
 /// A `model-run` launcher to use instead of looking on PATH.
 pub const MODEL_RUN_ENV: &str = "CTADL_MODEL_RUN";
 pub const KNOWN_FILE: &str = "cil-models-known.json5";
+
+/// The default model file this check holds to .NET.
+const DEFAULT_FILE: &str = "cil-index.ctadl";
 const TRIALS: u32 = 32;
 const SEED: u32 = 1;
 /// Failures listed in the outcome before the rest are counted.
 const MAX_LISTED: usize = 12;
 
-/// A port as a model numbers it: `Argument(n)` is `n`, `Return` is -1.
-type Port = i32;
-/// A port and a path, the path as segments: `["deref", "[]"]`.
-type Loc = (Port, Vec<String>);
+/// A port and a path: `Argument(n)` is `n`, `Return` is [`RETURN_INDEX`].
+type Loc = (FormalIndex, Vec<PathSegment>);
 
 #[derive(Deserialize)]
 struct Row {
@@ -88,13 +91,35 @@ struct Run {
     #[serde(default)]
     flows: Vec<Flow>,
     #[serde(default)]
-    depends: Vec<(Port, Port)>,
+    depends: Vec<(FormalIndex, FormalIndex)>,
 }
 
 #[derive(Deserialize)]
 struct Flow {
+    #[serde(deserialize_with = "wire_locs")]
     from: Vec<Loc>,
+    #[serde(deserialize_with = "wire_loc")]
     to: Loc,
+}
+
+/// A location as `model-run` writes it, the path in the path grammar: `[0, ".deref.\\[]"]`.
+type WireLoc = (FormalIndex, String);
+
+fn wire_loc<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Loc, D::Error> {
+    from_wire(WireLoc::deserialize(d)?)
+}
+
+fn wire_locs<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Loc>, D::Error> {
+    Vec::<WireLoc>::deserialize(d)?
+        .into_iter()
+        .map(from_wire)
+        .collect()
+}
+
+fn from_wire<E: serde::de::Error>((port, path): WireLoc) -> Result<Loc, E> {
+    let path = ctadl_ir::cir::path_syntax::parse_path(&path)
+        .map_err(|e| E::custom(format!("path `{path}`: {e}")))?;
+    Ok((port, path))
 }
 
 #[derive(Deserialize, Default)]
@@ -232,9 +257,14 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
     let mut failures: Vec<String> = Vec::new();
 
     // ---- which methods
-    let (name, contents) = CIL_DEFAULT_MODELS;
-    let generators = generator_lines(contents)?;
-    let classes: BTreeSet<String> = generators.iter().flat_map(|g| parents(g)).collect();
+    let (name, source) = DEFAULT_DSL_MODELS
+        .iter()
+        .find(|(name, _)| *name == DEFAULT_FILE)
+        .with_context(|| format!("no {DEFAULT_FILE} among the default models"))?;
+    let file =
+        PortcullisFile::from_text(*name, *source).map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
+    let rules = file.program.rules.clone();
+    let classes: BTreeSet<String> = rules.iter().flat_map(parents).collect();
     let classes_file = dir.join("classes.txt");
     std::fs::write(
         &classes_file,
@@ -284,20 +314,22 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
         Some(&dispatch_keys),
     );
     let mut matches = ProgramModelMatches::default();
-    let (report, errors) =
-        try_check_jsonl_models(&index, BufReader::new(contents), usize::MAX, &mut matches);
-    if let Some(e) = errors.first() {
-        bail!("{name} does not load: {e:?}");
-    }
-    for (n, g) in generators.iter().enumerate() {
-        let live = match report.matched.get(&n) {
-            Some(MatchedFunctions::All) => true,
-            Some(MatchedFunctions::Some { total, .. }) => *total > 0,
-            None => false,
-        };
-        let only_unavailable = parents(g).iter().all(|c| unavailable.contains(c.as_str()));
+    let set = PortcullisModelSet { files: vec![file] };
+    let mut matcher = PortcullisMatcher::new(&set, PortcullisPhase::All);
+    matcher.observe_import(&index, &mut matches);
+    let report = matcher
+        .finish(&mut matches)
+        .map(ModelLoadReport::from_portcullis)
+        .map_err(|e| anyhow::anyhow!("{name} does not load: {e:?}"))?;
+    for rule in &rules {
+        let live = report.matched.get(&rule.index).is_some_and(|m| m.total > 0);
+        let only_unavailable = parents(rule)
+            .iter()
+            .all(|c| unavailable.contains(c.as_str()));
         if !live && !only_unavailable {
-            failures.push(format!("{name}: generator {n} selects no method: {g}"));
+            let (line, _) = rule.span.line_col(source);
+            let text = &source[rule.span.start..rule.span.end];
+            failures.push(format!("{name}:{line}: rule selects no method: {text}"));
         }
     }
     let mut modeled: BTreeMap<String, BTreeSet<(Loc, Loc)>> = BTreeMap::new();
@@ -420,8 +452,9 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
         }
         for pair in pairs {
             let (s, d) = pair;
-            let n = arity.get(run.fid.as_str()).copied().unwrap_or(0) as Port;
-            if s.0 >= n || d.0 >= n {
+            let n = arity.get(run.fid.as_str()).copied().unwrap_or(0);
+            let beyond = |l: &Loc| usize::try_from(*l.0).is_ok_and(|i| i >= n);
+            if beyond(s) || beyond(d) {
                 continue;
             }
             if used.contains(pair) || run.depends.contains(&(s.0, d.0)) {
@@ -472,28 +505,31 @@ pub fn run(xtask_dir: &Path, work: &Path) -> Result<Outcome> {
     Ok(Outcome::Fail(why))
 }
 
-/// The generator lines of a JSONL model file, in generator-index order.
-fn generator_lines(contents: &[u8]) -> Result<Vec<String>> {
-    Ok(std::str::from_utf8(contents)?
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with("//"))
-        .map(str::to_string)
-        .collect())
-}
-
-/// The classes a generator's `signature_match` constraints name.
-fn parents(generator: &str) -> Vec<String> {
-    let value: Value = serde_json::from_str(generator).unwrap_or_default();
-    let mut out = Vec::new();
-    for w in value["where"].as_array().into_iter().flatten() {
-        if let Some(p) = w["parent"].as_str() {
-            out.push(p.to_string());
-        }
-        for p in w["parents"].as_array().into_iter().flatten() {
-            out.extend(p.as_str().map(str::to_string));
+/// The classes a rule's `parent = ...` and `parent in {...}` constraints name, under any
+/// negation or disjunction.
+fn parents(rule: &Rule) -> Vec<String> {
+    fn walk(item: &BodyItem, out: &mut Vec<String>) {
+        match item {
+            BodyItem::Atom(atom) => {
+                for attr in atom.attrs.iter().filter(|a| a.name == "parent") {
+                    match &attr.rhs {
+                        Rhs::Term(Term::Lit(Literal::Str(s))) => out.push(s.clone()),
+                        Rhs::Set(items) => out.extend(items.iter().filter_map(|l| match l {
+                            Literal::Str(s) => Some(s.clone()),
+                            _ => None,
+                        })),
+                        Rhs::Term(_) => {}
+                    }
+                }
+            }
+            BodyItem::Not(inner) => walk(inner, out),
+            BodyItem::And(items) | BodyItem::Or(items) => {
+                items.iter().for_each(|i| walk(i, out));
+            }
         }
     }
+    let mut out = Vec::new();
+    rule.body.iter().for_each(|item| walk(item, &mut out));
     out
 }
 
@@ -524,7 +560,7 @@ fn program(rows: &[Row]) -> ProgramInfo {
             f
         })
         .collect();
-    // One `callvirt` of every listed method, so a `find: "dispatch"` generator is matched
+    // One `callvirt` of every listed method, so a `dispatch` rule is matched
     // against the call-site keys the frontend would write for the same methods.
     let mut caller = FunctionData::default();
     caller.set_name("ctadl$cil-models$caller".to_string());
@@ -537,9 +573,12 @@ fn program(rows: &[Row]) -> ProgramInfo {
             b.create_call(
                 CallStyle::CilCall {
                     receiver: recv.clone(),
-                    cls: r.cls.as_str().into(),
-                    simple_name: r.simple.as_deref().unwrap_or_default().into(),
-                    descriptor: r.desc.as_deref().unwrap_or_default().into(),
+                    method: ctadl_ir::cir::CilMethodRef {
+                        cls: r.cls.as_str().into(),
+                        simple_name: r.simple.as_deref().unwrap_or_default().into(),
+                        descriptor: r.desc.as_deref().unwrap_or_default().into(),
+                    }
+                    .into(),
                 },
                 Vec::new(),
                 Vec::new(),
@@ -548,14 +587,32 @@ fn program(rows: &[Row]) -> ProgramInfo {
         b.create_ret(Vec::<Exp>::new());
     }
     functions.push(caller);
+    // Each method named as the CIL frontend names one: by its key.
+    let mut vmt = VirtualMethodTable::new(Dispatch::Cil {
+        methods,
+        hierarchy: Default::default(),
+        interfaces: Default::default(),
+        abstract_methods: Default::default(),
+        pinvokes: Default::default(),
+    });
+    vmt.names = rows
+        .iter()
+        .map(|r| {
+            FunctionNames::new(
+                r.fid.as_deref().unwrap_or_default(),
+                r.simple.as_deref().unwrap_or_default(),
+            )
+            .with_parent(r.cls.as_str())
+            .with_signature(r.desc.as_deref().unwrap_or_default())
+        })
+        .chain(std::iter::once(FunctionNames::new(
+            "ctadl$cil-models$caller",
+            "ctadl$cil-models$caller",
+        )))
+        .collect();
+    vmt.finish_names();
     ProgramInfo {
-        vmt: VirtualMethodTable::Cil {
-            methods,
-            hierarchy: Default::default(),
-            interfaces: Default::default(),
-            abstract_methods: Default::default(),
-            pinvokes: Default::default(),
-        },
+        vmt,
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }
@@ -563,49 +620,43 @@ fn program(rows: &[Row]) -> ProgramInfo {
 
 /// A model port as the locations it names; `Argument(*)` is every argument.
 fn expand(port: &ModelPort, arity: usize) -> Vec<Loc> {
-    let path: Vec<String> = port
-        .path
-        .iter()
-        .map(|seg| match seg {
-            PathSegment::Symbol(s) => {
-                let s: &str = s.as_ref();
-                s.to_string()
-            }
-            other => other.to_string(),
-        })
-        .collect();
+    let path: Vec<PathSegment> = port.path.iter().cloned().collect();
     match port.tag {
-        FormalIndexTypeTag::Return => vec![(-1, path)],
-        FormalIndexTypeTag::Index => vec![(port.index.unwrap_or(0) as Port, path)],
-        FormalIndexTypeTag::AnyArgument => (0..arity as Port).map(|i| (i, path.clone())).collect(),
+        FormalIndexTypeTag::Return => vec![(FormalIndex::new(RETURN_INDEX), path)],
+        FormalIndexTypeTag::Index => vec![(FormalIndex::new(port.index.unwrap_or(0)), path)],
+        FormalIndexTypeTag::AnyArgument => (0..arity)
+            .filter_map(|i| FormalIndex::try_from(i).ok())
+            .map(|i| (i, path.clone()))
+            .collect(),
         _ => Vec::new(),
     }
 }
 
 /// Whether the pair `(s, d)` covers the flow `f -> t`: the same ports, and the flow's paths are
-/// the pair's extended by one suffix.
+/// the pair's extended by one suffix. A pair into `q.#value` (taint flow) covers the flow from
+/// exactly `s` into `q`, as in `cil:taint`: observing `q` observes `q.#value` (S17 of
+/// docs/ir.md), and `#value` is terminal, so no suffix rides along.
 fn covers(s: &Loc, d: &Loc, f: &Loc, t: &Loc) -> bool {
-    s.0 == f.0
-        && d.0 == t.0
-        && f.1.starts_with(&s.1)
-        && t.1.starts_with(&d.1)
-        && f.1[s.1.len()..] == t.1[d.1.len()..]
+    if s.0 != f.0 || d.0 != t.0 {
+        return false;
+    }
+    let suffix_rides =
+        f.1.starts_with(&s.1) && t.1.starts_with(&d.1) && f.1[s.1.len()..] == t.1[d.1.len()..];
+    let into_value = f.1 == s.1
+        && d.1
+            .split_last()
+            .is_some_and(|(last, init)| *last == PathSegment::Value && init == t.1.as_slice());
+    suffix_rides || into_value
 }
 
 /// A location in port spelling: `Argument(0).\[]`, `Return.deref`.
 fn show(l: &Loc) -> String {
-    let mut s = if l.0 < 0 {
+    let port = if *l.0 < 0 {
         "Return".to_string()
     } else {
         format!("Argument({})", l.0)
     };
-    for seg in &l.1 {
-        s.push('.');
-        s.push_str(&ctadl_ir::mir::path_syntax::segment_to_string(
-            &PathSegment::symbol(seg.as_str()),
-        ));
-    }
-    s
+    port + &ctadl_ir::cir::path_syntax::path_to_string(&l.1)
 }
 
 pub fn resolve_xtask_dir() -> PathBuf {
@@ -616,43 +667,95 @@ pub fn resolve_xtask_dir() -> PathBuf {
 mod tests {
     use super::*;
 
-    fn loc(port: Port, path: &[&str]) -> Loc {
-        (port, path.iter().map(|s| s.to_string()).collect())
+    /// `path` in the path grammar: `.deref.\[]`.
+    fn loc(port: i16, path: &str) -> Loc {
+        (
+            FormalIndex::new(port),
+            ctadl_ir::cir::path_syntax::parse_path(path).unwrap(),
+        )
     }
 
     #[test]
     fn a_pair_covers_its_extensions_by_one_suffix() {
         // `Argument(0) -> Return` covers the elements too ...
         assert!(covers(
-            &loc(0, &[]),
-            &loc(-1, &[]),
-            &loc(0, &["[]"]),
-            &loc(-1, &["[]"])
+            &loc(0, ""),
+            &loc(-1, ""),
+            &loc(0, r".\[]"),
+            &loc(-1, r".\[]")
         ));
         // ... but does not take an element out of its collection.
         assert!(!covers(
-            &loc(0, &[]),
-            &loc(-1, &[]),
-            &loc(0, &["[]"]),
-            &loc(-1, &[])
+            &loc(0, ""),
+            &loc(-1, ""),
+            &loc(0, r".\[]"),
+            &loc(-1, "")
         ));
         assert!(covers(
-            &loc(0, &["[]"]),
-            &loc(-1, &[]),
-            &loc(0, &["[]"]),
-            &loc(-1, &[])
+            &loc(0, r".\[]"),
+            &loc(-1, ""),
+            &loc(0, r".\[]"),
+            &loc(-1, "")
         ));
         assert!(!covers(
-            &loc(0, &["[]"]),
-            &loc(-1, &[]),
-            &loc(1, &["[]"]),
-            &loc(-1, &[])
+            &loc(0, r".\[]"),
+            &loc(-1, ""),
+            &loc(1, r".\[]"),
+            &loc(-1, "")
         ));
     }
 
     #[test]
+    fn a_value_pair_covers_exactly_its_source() {
+        // `Return.#value <- Argument(1)` covers the flow into `Return` from `Argument(1)` ...
+        assert!(covers(
+            &loc(1, ""),
+            &loc(-1, ".#value"),
+            &loc(1, ""),
+            &loc(-1, "")
+        ));
+        assert!(covers(
+            &loc(1, r".\[]"),
+            &loc(0, ".deref.#value"),
+            &loc(1, r".\[]"),
+            &loc(0, ".deref")
+        ));
+        // ... but carries nothing reachable through `Argument(1)`.
+        assert!(!covers(
+            &loc(1, ""),
+            &loc(-1, ".#value"),
+            &loc(1, r".\[]"),
+            &loc(-1, r".\[]")
+        ));
+        assert!(!covers(
+            &loc(1, ""),
+            &loc(-1, ".#value"),
+            &loc(1, r".\[]"),
+            &loc(-1, "")
+        ));
+    }
+
+    #[test]
+    fn a_model_run_flow_reads_its_paths_in_the_path_grammar() {
+        let flow: Flow = serde_json::from_str(
+            r#"{"from": [[1, ".deref.\\[]"]],
+                "to": [-1, ".<[System\\.Private\\.CoreLib]System\\.ValueTuple`2::Item1>"]}"#,
+        )
+        .unwrap();
+        assert_eq!(flow.from, vec![loc(1, r".deref.\[]")]);
+        assert_eq!(
+            flow.to.1,
+            vec![PathSegment::field(
+                "<[System.Private.CoreLib]System.ValueTuple`2::Item1>"
+            )]
+        );
+        // A path out of the grammar is an error, not a guess.
+        assert!(serde_json::from_str::<Flow>(r#"{"from": [], "to": [-1, ".[]"]}"#).is_err());
+    }
+
+    #[test]
     fn locations_print_in_port_spelling() {
-        assert_eq!(show(&loc(0, &["deref", "[]"])), r"Argument(0).deref.\[]");
-        assert_eq!(show(&loc(-1, &[])), "Return");
+        assert_eq!(show(&loc(0, r".deref.\[]")), r"Argument(0).deref.\[]");
+        assert_eq!(show(&loc(-1, "")), "Return");
     }
 }

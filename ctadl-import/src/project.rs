@@ -81,7 +81,7 @@ fn absolutize(path: &Path) -> PathBuf {
 /// into something wrong). History:
 ///
 /// - `1`: original format.
-/// - `2`: MIR locals moved into a per-function `Locals` table and `Variable::Local` became a
+/// - `2`: CIR locals moved into a per-function `Locals` table and `Variable::Local` became a
 ///   `LocalIdx` instead of a name, changing the `bitcode` wire format of `ir-program.bitcode`.
 /// - `3`: the native VMT gained a fully-qualified-name column (`NativeQualifiedName`, backing
 ///   the `qualified-id` model constraint), changing the `bitcode` wire format of
@@ -109,7 +109,27 @@ fn absolutize(path: &Path) -> PathBuf {
 ///   implementation below the named class. A `bitcode` wire-format change to every
 ///   `ir-program.bitcode`.
 /// - `9`: APK imports gained persisted Android manifest triple tables.
-pub const IMPORT_FORMAT_VERSION: &str = "9";
+/// - `10`: The dex frontend splits a class-merged class (R8's merged lambdas) into one class per
+///   class id, with clones of its switching methods and retagged construction sites. The file
+///   format is unchanged, but an older import of such an app has the merged methods only.
+/// - `11`: `VirtualMethodTable` became a struct of the per-function name table every frontend
+///   fills and the per-language `Dispatch`, and the CIL frontend writes override bridges where
+///   it wrote alias rows. A `bitcode` wire-format change to every `ir-vmt.bitcode`.
+/// - `12`: `PathSegment` has four variants, `Field`, `Offset`, `Deref` and `Value`; `deref` and
+///   `#value` are no longer field names (`docs/ir.md`). A `bitcode` wire-format change to every
+///   `ir-program.bitcode`.
+/// - `13`: assignments take full access paths as destination and sources, and the `Load`,
+///   `Store`, `Address` and `FieldRef` forms are gone (`docs/ir.md`); an indirect call's callee
+///   is an access path. A `bitcode` wire-format change to every `ir-program.bitcode`.
+/// - `14`: a program declares its globals (`Program::globals`), and `Variable::Global` names one
+///   in place of the one global heap `$globals`. A `bitcode` wire-format change to every
+///   `ir-program.bitcode`, and every front end's global lowering changed.
+/// - `15`: `ir-program.bitcode` is a sequence of frames, the globals and then the functions a
+///   few thousand at a time, each its own bitcode value (`ctadl_ir::encode::encode_program`).
+/// - `16`: [`crate::save_program_info`] verifies every program before writing it. The file format
+///   is unchanged, but the C and Lua front ends did not verify their output, so an older import
+///   of theirs may hold IR that fails verification.
+pub const IMPORT_FORMAT_VERSION: &str = "16";
 
 /// Filename of the serialized IR program inside an import directory.
 pub const PROGRAM_BITCODE_FILE: &str = "ir-program.bitcode";
@@ -143,7 +163,7 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   The frontends' bracketed symbol names round-tripped wrong: `Symbol("[]")` and
 ///   `Symbol("[_elem_]")` were *deleted* (read back as the empty path) and `Symbol("[3]")` flipped
 ///   to `Offset(3)`.
-/// - `2`: `Path` columns use the canonical access-path grammar (`ctadl_ir::mir::path_syntax`),
+/// - `2`: `Path` columns use the canonical path grammar (`ctadl_ir::cir::path_syntax`),
 ///   which escapes a leading `[` on print, so those segments survive as the symbols the frontend
 ///   emitted.
 /// - `3`: `index_source_map` gained an `import_id` column, and `import_id.parquet` names what
@@ -157,7 +177,30 @@ pub const PROJECT_CONFIG_FILE: &str = "project_config.json";
 ///   wants the final call graph must union the two, as query does.
 /// - `5`: the CIL front end's call-resolution key space: `CallTargetObject::CilClass` and
 ///   `CallDispatchKey::Cil`, each a new parquet tag (3) that an older reader rejects.
-pub const INDEX_FORMAT_VERSION: &str = "5";
+/// - `6`: the index gained `update_sans_path.parquet`, the copies functional updates make,
+///   which loading an index result now requires.
+/// - `7`: `update_sans_path.parquet` is gone with the IR's functional update; a frame slot write
+///   is a store (`docs/ir.md`). Paths are in the normal form of `ctadl_ir::cir::path`, with
+///   `deref` and `#value` segments distinct from fields.
+/// - `8`: globals are variables (`docs/ir.md`, G1). `summary.parquet`'s roots are two columns each,
+///   `<root>_index` and `<root>_global`; a flow variable may be a global (tag 4); the index
+///   gained `globals.parquet`, the project's globals by declaring import, and
+///   `global_flow.parquet`, the program-level flows between globals.
+pub const INDEX_FORMAT_VERSION: &str = "8";
+
+/// The front-end convention options set in the environment to something other than their
+/// default, for [`ArtifactImport::conventions`]. pcode's `CTADL_EXP_INT_ARITH` (`value` by
+/// default, `merge` as a comparison knob) is the one there is.
+fn non_default_conventions(language: ArtifactLanguage) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    if language == ArtifactLanguage::Pcode
+        && let Ok(v) = std::env::var("CTADL_EXP_INT_ARITH")
+        && v != "value"
+    {
+        out.insert("CTADL_EXP_INT_ARITH".to_string(), v);
+    }
+    out
+}
 
 /// What [`ArtifactImport::status`] holds once an import has finished.
 pub const IMPORT_STATUS_DONE: &str = "done";
@@ -182,6 +225,25 @@ pub struct IndexConfig {
     /// [`INDEX_FORMAT_VERSION`] did not change for it.
     #[serde(default)]
     pub import_hashes: BTreeMap<String, String>,
+    /// The engine options that change results, which the approximations register of
+    /// `docs/limitations.md` names: `None` for an index written before this field existed.
+    #[serde(default)]
+    pub engine: Option<EngineRecord>,
+}
+
+/// The index options that change its results, recorded with the index so a result can be traced
+/// to the approximations it was computed under.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EngineRecord {
+    /// Whether the alias summary rule ran (the backward rule's restriction to copy chains rooted
+    /// at a formal).
+    pub alias_rule: bool,
+    /// The hybrid-inlining context widening, as `--hybrid-context` spells it.
+    pub hybrid_context: String,
+    /// Whether every program path gained its `.deref` extension.
+    pub deref_paths: bool,
+    /// The `--mem2reg` policy the IR passes ran with, `off` for none.
+    pub mem2reg: String,
 }
 
 /// How the index resolved calls, so a query can say what it is reading.
@@ -283,6 +345,10 @@ pub struct ArtifactImport {
     /// [`IMPORT_STATUS_DONE`] once the import has finished.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// The front end's convention options this import was lowered under, when they are not the
+    /// default: option name to value. Empty for the defaults.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub conventions: BTreeMap<String, String>,
 }
 
 impl ArtifactImport {
@@ -322,6 +388,7 @@ impl ArtifactImport {
             hash: None,
             sub_imports: Vec::new(),
             status: None,
+            conventions: BTreeMap::new(),
         };
         result.save()?;
         Ok(result)
@@ -469,6 +536,7 @@ impl ArtifactImport {
     pub fn mark_complete(name: &str) -> Result<(), Error> {
         let mut import = Self::load_by_name(name)?;
         import.status = Some(IMPORT_STATUS_DONE.to_string());
+        import.conventions = non_default_conventions(import.language);
         import.save()
     }
 
@@ -577,6 +645,7 @@ pub fn hash_artifact(path: &Path) -> Result<String, Error> {
     use source_info::ContentHasher;
 
     let mut hasher = ContentHasher::new();
+    let mut buf = vec![0u8; HASH_BUF_LEN];
     let metadata = std::fs::symlink_metadata(path)
         .err_context(|| format!("reading artifact metadata: {}", path.display()))?;
     if metadata.is_dir() {
@@ -590,19 +659,63 @@ pub fn hash_artifact(path: &Path) -> Result<String, Error> {
             // concatenation.
             hasher.update(&(rel_bytes.len() as u64).to_le_bytes());
             hasher.update(rel_bytes.as_bytes());
-            let data = std::fs::read(file)
-                .map_err(Error::Io)
-                .err_context(|| format!("hashing artifact file: {}", file.display()))?;
-            hasher.update(&(data.len() as u64).to_le_bytes());
-            hasher.update(&data);
+            hash_file(&mut hasher, file, true, &mut buf)?;
         }
     } else {
-        let data = std::fs::read(path)
-            .map_err(Error::Io)
-            .err_context(|| format!("hashing artifact: {}", path.display()))?;
-        hasher.update(&data);
+        hash_file(&mut hasher, path, false, &mut buf)?;
     }
     Ok(to_hex(&hasher.finalize()))
+}
+
+/// Size of the buffer [`hash_artifact`] reads files through.
+const HASH_BUF_LEN: usize = 64 * 1024;
+
+/// Feeds the file at `path` to `hasher` as [`hash_reader`] does, with the length taken from the
+/// open file's metadata. Errors name `path`.
+fn hash_file(
+    hasher: &mut source_info::ContentHasher,
+    path: &Path,
+    framed: bool,
+    buf: &mut [u8],
+) -> Result<(), Error> {
+    File::open(path)
+        .and_then(|file| {
+            let len = file.metadata()?.len();
+            hash_reader(hasher, file, len, framed, buf)
+        })
+        .err_context(|| format!("hashing artifact file: {}", path.display()))
+}
+
+/// Feeds `reader` to `hasher` through `buf`, preceded by `len` as a little-endian `u64` when
+/// `framed`. Fails if `reader` does not yield exactly `len` bytes.
+fn hash_reader(
+    hasher: &mut source_info::ContentHasher,
+    mut reader: impl std::io::Read,
+    len: u64,
+    framed: bool,
+    buf: &mut [u8],
+) -> std::io::Result<()> {
+    if framed {
+        hasher.update(&len.to_le_bytes());
+    }
+    let mut total: u64 = 0;
+    loop {
+        let n = match reader.read(buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        hasher.update(&buf[..n]);
+        total += n as u64;
+    }
+    if total != len {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("file changed while hashing: expected {len} bytes, read {total}"),
+        ));
+    }
+    Ok(())
 }
 
 /// Recursively collects regular files under `dir` into `out`.
@@ -834,7 +947,11 @@ impl AnalysisProject {
     ///
     /// If there is an error creating the index dir, or serializing or writing the config
     #[inline]
-    pub fn write_index_config(&self, call_policy: Option<CallPolicyRecord>) -> Result<(), Error> {
+    pub fn write_index_config(
+        &self,
+        call_policy: Option<CallPolicyRecord>,
+        engine: Option<EngineRecord>,
+    ) -> Result<(), Error> {
         // An import that cannot be loaded, or never recorded a hash, is left out: there is
         // nothing to compare it against later.
         let import_hashes: BTreeMap<String, String> = self
@@ -851,6 +968,7 @@ impl AnalysisProject {
                 version: INDEX_FORMAT_VERSION.to_string(),
                 call_policy,
                 import_hashes,
+                engine,
             },
         )
         .err_context(|| format!("writing index config: '{}'", path.display()))?;
@@ -1083,7 +1201,7 @@ impl ArtifactLanguage {
     ];
 
     /// The lowercase spelling a model generator's `in` block uses. Distinct from the
-    /// [`ctadl_ir::mir::call::VirtualMethodTable`] variant on purpose: the VMT cannot tell `dex`
+    /// [`ctadl_ir::cir::call::VirtualMethodTable`] variant on purpose: the VMT cannot tell `dex`
     /// from `apk` from `jar`, and `in` must.
     pub fn name(self) -> &'static str {
         match self {
@@ -1187,5 +1305,137 @@ mod tests {
         .expect("old index config");
         assert_eq!(config.version, INDEX_FORMAT_VERSION);
         assert!(config.import_hashes.is_empty());
+    }
+
+    /// Hashes an artifact as `hash_artifact` does, but reads each file whole: the reference
+    /// digest the streaming hash must match.
+    fn whole_file_hash_artifact(path: &Path) -> String {
+        let mut hasher = source_info::ContentHasher::new();
+        if path.is_dir() {
+            let mut files = Vec::new();
+            collect_files(path, &mut files).expect("collect files");
+            files.sort();
+            for file in &files {
+                let rel = file.strip_prefix(path).unwrap_or(file);
+                let rel_bytes = rel.to_string_lossy();
+                hasher.update(&(rel_bytes.len() as u64).to_le_bytes());
+                hasher.update(rel_bytes.as_bytes());
+                let data = std::fs::read(file).expect("read file");
+                hasher.update(&(data.len() as u64).to_le_bytes());
+                hasher.update(&data);
+            }
+        } else {
+            hasher.update(&std::fs::read(path).expect("read file"));
+        }
+        to_hex(&hasher.finalize())
+    }
+
+    /// `len` bytes that do not repeat with the buffer's period.
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn hash_artifact_digest_unchanged() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for len in [0, 1, 65_535, 65_536, 65_537, 200_000] {
+            let path = dir.path().join(format!("file-{len}"));
+            std::fs::write(&path, pattern(len)).expect("write file");
+            assert_eq!(
+                hash_artifact(&path).expect("hash"),
+                whole_file_hash_artifact(&path),
+                "single file of {len} bytes"
+            );
+        }
+
+        let tree = dir.path().join("tree");
+        std::fs::create_dir_all(tree.join("a/b/c")).expect("mkdir");
+        std::fs::create_dir_all(tree.join("d")).expect("mkdir");
+        std::fs::write(tree.join("top.txt"), b"top").expect("write");
+        std::fs::write(tree.join("a/empty"), b"").expect("write");
+        std::fs::write(tree.join("a/b/exact"), pattern(HASH_BUF_LEN)).expect("write");
+        std::fs::write(tree.join("a/b/c/big"), pattern(3 * HASH_BUF_LEN + 7)).expect("write");
+        std::fs::write(tree.join("d/small"), b"small").expect("write");
+        assert_eq!(
+            hash_artifact(&tree).expect("hash"),
+            whole_file_hash_artifact(&tree),
+            "directory tree"
+        );
+
+        let empty = dir.path().join("empty-dir");
+        std::fs::create_dir(&empty).expect("mkdir");
+        assert_eq!(
+            hash_artifact(&empty).expect("hash"),
+            whole_file_hash_artifact(&empty),
+            "empty directory"
+        );
+    }
+
+    #[test]
+    fn hash_artifact_known_digests() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let hello = dir.path().join("hello");
+        std::fs::write(&hello, b"hello").expect("write");
+        assert_eq!(
+            hash_artifact(&hello).expect("hash"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+        let empty = dir.path().join("empty");
+        std::fs::write(&empty, b"").expect("write");
+        assert_eq!(
+            hash_artifact(&empty).expect("hash"),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    /// Returns `Interrupted` on its first read, then reads from `inner`.
+    struct InterruptOnce<R> {
+        interrupted: bool,
+        inner: R,
+    }
+
+    impl<R: std::io::Read> std::io::Read for InterruptOnce<R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            self.inner.read(buf)
+        }
+    }
+
+    #[test]
+    fn hash_reader_rejects_length_mismatch() {
+        use std::io::Cursor;
+        let bytes = pattern(10);
+        let mut buf = vec![0u8; 4];
+        for len in [9, 11] {
+            let mut hasher = source_info::ContentHasher::new();
+            let err = hash_reader(&mut hasher, Cursor::new(&bytes), len, true, &mut buf)
+                .expect_err("length mismatch accepted");
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "len {len}");
+        }
+
+        let mut plain = source_info::ContentHasher::new();
+        hash_reader(&mut plain, Cursor::new(&bytes), 10, false, &mut buf).expect("hash");
+        let mut interrupted = source_info::ContentHasher::new();
+        let reader = InterruptOnce {
+            interrupted: false,
+            inner: Cursor::new(&bytes),
+        };
+        hash_reader(&mut interrupted, reader, 10, false, &mut buf).expect("hash");
+        assert_eq!(interrupted.finalize(), plain.finalize());
+    }
+
+    #[test]
+    fn hash_artifact_missing_file_errors() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let missing = dir.path().join("no-such-artifact");
+        let err = hash_artifact(&missing).expect_err("missing file hashed");
+        let message = err.to_string();
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "{message}"
+        );
     }
 }

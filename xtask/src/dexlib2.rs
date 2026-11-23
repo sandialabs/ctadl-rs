@@ -15,10 +15,10 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{anyhow, bail, Context, Result};
-use dex_reader::instructions::{Format, Instruction, PayloadInstruction, DALVIK_OPCODES};
-use dex_reader::parser::{decode_code_item, DecodedCodeItem};
+use anyhow::{Context, Result, anyhow, bail};
 use dex_reader::DexParser;
+use dex_reader::instructions::{DALVIK_OPCODES, Format, Instruction, PayloadInstruction};
+use dex_reader::parser::{DecodedCodeItem, decode_code_item};
 
 use crate::exec;
 

@@ -1,0 +1,137 @@
+// Default propagation models for the Lua frontend (VirtualMethodTable::Lua).
+//
+// These match *externals* -- functions called but never defined in the import. The frontend
+// registers each under both spellings it can appear as: the fully-qualified callee text
+// (`os.execute`) and its last dotted component (`execute`), because method-call syntax lowers
+// to the bare name (`s:format(x)` becomes `direct-call format(%s, x)`) while dotted syntax
+// keeps the prefix (`string.format(x)` becomes `direct-call string.format(x)`). A name spelled
+// bare therefore covers both call syntaxes; one spelled with a prefix covers only the dotted
+// form, which is deliberate for short names like `concat` and `remove`.
+//
+// DELIBERATELY ABSENT -- do not add:
+//   `table.insert`, `ipairs`, `pairs`, `select`: the frontend recognizes these syntactically
+//     and lowers them straight to dataflow (`frontends/ctadl-lua/src/lib.rs`,
+//     `eval_builtin_call`), so no call statement is emitted at all. A model would double-count.
+//   `setmetatable`: likewise lowered directly (`eval_setmetatable`) -- it never appears as a
+//     call target, so a model on it would be inert rather than wrong.
+//   `pcall`, `xpcall`, `coroutine.*`: these invoke a function-valued argument, which a
+//     propagation model cannot express.
+//
+// OBJECT FLOW AND TAINT FLOW (docs/portcullis.md, "Object flow and taint flow"). Strings and numbers computed
+// by a library function are taint flow; a value handed back as it is (`assert`, an element out
+// of a table) is object flow. A file a `write` changes holds the taint at `arg(0).#value` and at
+// `arg(0)."#contents".#value`, and `read` reads both.
+//
+// TABLES are element-level: the frontend emits `PathSegment::Symbol("[_elem_]")` for an element,
+// which a port spells as the quoted field `."[_elem_]"`. A read is `return <- arg(0)."[_elem_]"`
+// and a write `arg(0)."[_elem_]" <- ...`, the two halves of one prefix substitution, so they
+// compose with each other and with the frontend's own `t[k]`. A key contributes only taint.
+propagation(F::return.#value <- F::arg(_)) :-
+  fun(F, name in {"format", "rep", "sub", "upper", "lower", "reverse", "char"});
+propagation(F::return.#value <- F::arg(_)) :-
+  fun(F),
+  F in {"format", "rep", "sub", "upper", "lower", "reverse", "char"};
+
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name in {"gsub", "match", "gmatch", "byte", "len"});
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F),
+  F in {"gsub", "match", "gmatch", "byte", "len"};
+
+// `table.concat(t, sep, i, j)` joins the elements into a new string.
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(0)."[_elem_]") :-
+  fun(F, name = "table.concat");
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(0)."[_elem_]") :-
+  fun(F),
+  F = "table.concat";
+
+// `table.remove(t, pos)` and `unpack(t, i, j)` hand back elements.
+propagation(F::return <- F::arg(0)."[_elem_]") :-
+  fun(F, name in {"table.remove", "table.unpack", "unpack"});
+propagation(F::return <- F::arg(0)."[_elem_]") :-
+  fun(F),
+  F in {"table.remove", "table.unpack", "unpack"};
+
+// `rawget(t, k)` and `next(t, k)` hand back an element (`next` its key too).
+propagation(F::return <- F::arg(0)."[_elem_]"),
+  propagation(F::return.#value <- F::arg(1)) :-
+  fun(F, name in {"rawget", "next"});
+propagation(F::return <- F::arg(0)."[_elem_]"),
+  propagation(F::return.#value <- F::arg(1)) :-
+  fun(F),
+  F in {"rawget", "next"};
+
+// `rawset(t, k, v)` stores an element and returns `t`.
+propagation(F::arg(0)."[_elem_]" <- F::arg(2)),
+  propagation(F::return <- F::arg(0)) :-
+  fun(F, name = "rawset");
+propagation(F::arg(0)."[_elem_]" <- F::arg(2)),
+  propagation(F::return <- F::arg(0)) :-
+  fun(F),
+  F = "rawset";
+
+propagation(F::return.#value <- F::arg(_)) :-
+  fun(F, name in {"tostring", "tonumber"});
+propagation(F::return.#value <- F::arg(_)) :-
+  fun(F),
+  F in {"tostring", "tonumber"};
+
+// `assert(v, ...)` returns its arguments themselves.
+propagation(F::return <- F::arg(_)) :-
+  fun(F, name = "assert");
+propagation(F::return <- F::arg(_)) :-
+  fun(F),
+  F = "assert";
+
+propagation(F::return.#value <- F::arg(_)) :-
+  fun(F, name in {"os.date", "os.getenv", "os.tmpname"});
+propagation(F::return.#value <- F::arg(_)) :-
+  fun(F),
+  F in {"os.date", "os.getenv", "os.tmpname"};
+
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(_)."#contents") :-
+  fun(F, name in {"io.open", "io.read", "io.lines", "read"});
+propagation(F::return.#value <- F::arg(_)),
+  propagation(F::return.#value <- F::arg(_)."#contents") :-
+  fun(F),
+  F in {"io.open", "io.read", "io.lines", "read"};
+
+// `file:write(...)` returns the file and takes any number of values. `io.write(...)` is also
+// called `write`, and there `arg(0)` is the first value, not a file: the rule then relates the
+// values to each other, which no sink observes unless one is itself written.
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0).#value <- F::arg(_)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(_)) :-
+  fun(F, name = "write");
+propagation(F::return <- F::arg(0)),
+  propagation(F::arg(0).#value <- F::arg(_)),
+  propagation(F::arg(0)."#contents".#value <- F::arg(_)) :-
+  fun(F),
+  F = "write";
+
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name in {"cjson.encode", "cjson.safe.encode"});
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F),
+  F in {"cjson.encode", "cjson.safe.encode"};
+
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name in {"cjson.decode", "cjson.safe.decode"});
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F),
+  F in {"cjson.decode", "cjson.safe.decode"};
+
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name in {"ngx.escape_uri", "ngx.unescape_uri", "ngx.encode_base64", "ngx.decode_base64", "ngx.encode_args", "ngx.decode_args", "ngx.quote_sql_str", "ngx.md5", "ngx.sha1_bin"});
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F),
+  F in {"ngx.escape_uri", "ngx.unescape_uri", "ngx.encode_base64", "ngx.decode_base64", "ngx.encode_args", "ngx.decode_args", "ngx.quote_sql_str", "ngx.md5", "ngx.sha1_bin"};
+
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F, name in {"ngx.re.match", "ngx.re.gsub", "ngx.re.sub"});
+propagation(F::return.#value <- F::arg(0)) :-
+  fun(F),
+  F in {"ngx.re.match", "ngx.re.gsub", "ngx.re.sub"};

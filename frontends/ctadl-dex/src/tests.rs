@@ -4,7 +4,6 @@ use dex_reader::instructions::{
     Format11n, Format21h, Format21s, Format31i, Format51l, Instruction,
 };
 use dex_reader::types::CodeItem;
-use std::sync::OnceLock;
 
 fn dummy_parser() -> DexParser<'static> {
     DexParser {
@@ -12,10 +11,7 @@ fn dummy_parser() -> DexParser<'static> {
         header: Default::default(),
         map_list: Default::default(),
         map_items_by_type: std::collections::HashMap::new(),
-        strings: dex_reader::types::StringTable {
-            data: &[],
-            string_ids: vec![],
-        },
+        strings: dex_reader::types::StringTable::new(&[], vec![]),
         type_ids: vec![],
         proto_ids: vec![],
         field_ids: vec![],
@@ -23,9 +19,7 @@ fn dummy_parser() -> DexParser<'static> {
         class_defs: vec![],
         call_site_ids: None,
         method_handles: None,
-        cache: dex_reader::parser::Cache {
-            pool: OnceLock::new(),
-        },
+        cache: Default::default(),
     }
 }
 
@@ -44,18 +38,28 @@ fn dummy_code_item() -> CodeItem {
 }
 
 fn assign_from(inst: Instruction) -> (Vec<(VariableRef, Exp)>, Locals) {
-    let parser = dummy_parser();
-    let mut ctx = Context::new();
+    assign_from_in(&dummy_parser(), &mut Context::new(), inst)
+}
+
+/// [`assign_from`], against `parser` and in `ctx`.
+fn assign_from_in(
+    parser: &DexParser<'_>,
+    ctx: &mut Context,
+    inst: Instruction,
+) -> (Vec<(VariableRef, Exp)>, Locals) {
     let mut locals = Locals::default();
     let assigns = ctx
-        .dataflow_to_assign(&parser, &dummy_code_item(), &inst, &mut locals)
+        .dataflow_to_assign(parser, &dummy_code_item(), &inst, &mut locals)
         .unwrap()
         .into_iter()
         .flat_map(|s| match s {
             Statement {
                 kind: StatementKind::Assign { dest, sources },
                 ..
-            } => sources.into_iter().map(|s| (dest.clone(), s)).collect(),
+            } => sources
+                .into_iter()
+                .map(|s| (dest.base.clone(), s))
+                .collect(),
             _ => Vec::new(),
         })
         .collect();
@@ -202,10 +206,7 @@ fn new_instance_assign() {
     let mut parser = dummy_parser();
     parser.data = data;
     parser.type_ids = vec![TypeId { descriptor_idx: 0 }];
-    parser.strings = StringTable {
-        data,
-        string_ids: vec![StringId { string_data_off: 0 }],
-    };
+    parser.strings = StringTable::new(data, vec![StringId { string_data_off: 0 }]);
 
     let inst = Instruction::NewInstance(Format21c {
         a: Reg(0),
@@ -222,7 +223,10 @@ fn new_instance_assign() {
                 Statement {
                     kind: StatementKind::Assign { dest, sources },
                     ..
-                } => sources.into_iter().map(|s| (dest.clone(), s)).collect(),
+                } => sources
+                    .into_iter()
+                    .map(|s| (dest.base.clone(), s))
+                    .collect(),
                 _ => Vec::new(),
             })
             .collect::<Vec<_>>()
@@ -247,16 +251,16 @@ fn parser_with_field() -> DexParser<'static> {
     let data: &'static [u8] = b"\x05LBar;\0\x05LFoo;\0\x02cb\0";
     let mut parser = dummy_parser();
     parser.data = data;
-    parser.strings = StringTable {
+    parser.strings = StringTable::new(
         data,
-        string_ids: vec![
+        vec![
             StringId { string_data_off: 0 },
             StringId { string_data_off: 7 },
             StringId {
                 string_data_off: 14,
             },
         ],
-    };
+    );
     parser.type_ids = vec![TypeId { descriptor_idx: 0 }, TypeId { descriptor_idx: 1 }];
     parser.field_ids = vec![FieldId {
         class_idx: 1,
@@ -286,14 +290,20 @@ fn store_parts(parser: &DexParser<'_>, inst: Instruction) -> (Vec<String>, Strin
     else {
         panic!("expected an assign, got {assign:?}");
     };
-    let StatementKind::Store { dest, value, .. } = &store.kind else {
+    let StatementKind::Assign {
+        dest,
+        sources: stored,
+    } = &store.kind
+    else {
         panic!("expected a store, got {store:?}");
     };
+    assert!(!dest.is_pathless(), "expected a store, got {store:?}");
+    let value = &stored[0];
     assert_eq!(value, &Exp::from(temp.clone()), "store must write the temp");
     let values = sources
         .iter()
         .map(|s| match s {
-            Exp::Variable(v) => local_name(&locals, v),
+            Exp::Path(ap) if ap.is_pathless() => local_name(&locals, &ap.base),
             other => panic!("expected a variable source, got {other:?}"),
         })
         .collect();
@@ -388,26 +398,32 @@ fn aput_wide_stores_value_pair() {
     );
 }
 
+/// The flows of `inst` as `(dest, source)` names, where every source must be the value of a
+/// register (S19).
+fn value_flows(inst: Instruction) -> Vec<(String, String)> {
+    let (assigns, locals) = assign_from(inst);
+    assigns
+        .iter()
+        .map(|(var, exp)| {
+            let Exp::Value(src) = exp else {
+                panic!("expected the value of a register, got {exp:?}");
+            };
+            assert!(src.is_pathless(), "{src:?}");
+            (local_name(&locals, var), local_name(&locals, &src.base))
+        })
+        .collect()
+}
+
 /// `shl-long v0, v2, v4` computes `v0:v1 = v2:v3 << v4`. The shift amount is the int in `v4`, so
 /// `v5` must not flow into the result.
 #[test]
 fn shl_long_reads_one_shift_register() {
     use dex_reader::instructions::Format23x;
-    let inst = Instruction::ShlLong(Format23x {
+    let flows = value_flows(Instruction::ShlLong(Format23x {
         a: Reg(0),
         b: Reg(2),
         c: Reg(4),
-    });
-    let (assigns, locals) = assign_from(inst);
-    let flows: Vec<(String, String)> = assigns
-        .iter()
-        .map(|(var, exp)| {
-            let Exp::Variable(src) = exp else {
-                panic!("expected a variable source, got {exp:?}");
-            };
-            (local_name(&locals, var), local_name(&locals, src))
-        })
-        .collect();
+    }));
     let expected: Vec<(String, String)> = ["v0", "v1"]
         .iter()
         .flat_map(|d| ["v2", "v3", "v4"].map(|s| (d.to_string(), s.to_string())))
@@ -434,7 +450,7 @@ fn parser_with_strings(strings: &[&str]) -> DexParser<'static> {
     let data: &'static [u8] = Box::leak(data.into_boxed_slice());
     let mut parser = dummy_parser();
     parser.data = data;
-    parser.strings = StringTable { data, string_ids };
+    parser.strings = StringTable::new(data, string_ids);
     parser
 }
 
@@ -473,10 +489,10 @@ fn arg_names(locals: &Locals, args: &[Exp]) -> Vec<String> {
         .collect()
 }
 
-/// `invoke-polymorphic {v0, v1, v2}, MethodHandle.invoke, proto` calls `invoke` on the handle
-/// in `v0`, passing `v1` and `v2`, like invoke-virtual.
+/// `invoke-polymorphic {v0, v1, v2}, MethodHandle.invoke, proto` calls whatever the handle in
+/// `v0` refers to: an indirect call through `v0`, passing `v1` and `v2` (S11).
 #[test]
-fn invoke_polymorphic_is_a_virtual_call() {
+fn invoke_polymorphic_is_an_indirect_call_through_the_handle() {
     use dex_reader::instructions::{Format45cc, MethodIdx, ProtoIdx};
     let parser = parser_with_method_handle_invoke();
     let inst = Instruction::InvokePolymorphic(Format45cc {
@@ -492,20 +508,11 @@ fn invoke_polymorphic_is_a_virtual_call() {
     let StatementKind::CallAssign { style, args, rets } = &stmt.kind else {
         panic!("expected a call, got {stmt:?}");
     };
-    let CallStyle::JavaCall {
-        receiver,
-        cls,
-        simple_name,
-        dispatch,
-        ..
-    } = style
-    else {
-        panic!("expected a Java call, got {style:?}");
+    let CallStyle::FuncPtrCall { callee, .. } = style else {
+        panic!("expected an indirect call, got {style:?}");
     };
-    assert_eq!(local_name(&locals, receiver), "v0");
-    assert_eq!(&**cls, "Ljava/lang/invoke/MethodHandle;");
-    assert_eq!(&**simple_name, "invoke");
-    assert_eq!(*dispatch, JavaDispatch::Virtual);
+    assert!(callee.segments.is_empty(), "{callee}");
+    assert_eq!(local_name(&locals, &callee.base), "v0");
     assert_eq!(arg_names(&locals, args), ["v1", "v2"]);
     assert_eq!(ctx.call_result.as_ref(), Some(&rets[0]));
 }
@@ -561,4 +568,277 @@ fn const_method_handle_and_type_assign_an_object() {
         };
         assert_eq!(&**got, cls);
     }
+}
+
+/// Arithmetic, conversions, comparisons and `instance-of` supply values only (S19).
+#[test]
+fn arithmetic_and_comparisons_supply_values_only() {
+    use dex_reader::instructions::{Format12x, Format22b, Format22c, Format23x};
+    let pair = |d: &str, s: &str| (d.to_string(), s.to_string());
+    assert_eq!(
+        value_flows(Instruction::AddInt(Format23x {
+            a: Reg(0),
+            b: Reg(1),
+            c: Reg(2),
+        })),
+        [pair("v0", "v1"), pair("v0", "v2")]
+    );
+    assert_eq!(
+        value_flows(Instruction::AddInt2Addr(Format12x {
+            a: Reg(0),
+            b: Reg(1),
+        })),
+        [pair("v0", "v0"), pair("v0", "v1")]
+    );
+    assert_eq!(
+        value_flows(Instruction::AddIntLit8(Format22b {
+            a: Reg(0),
+            b: Reg(1),
+            c: 3,
+        })),
+        [pair("v0", "v1")]
+    );
+    assert_eq!(
+        value_flows(Instruction::NegInt(Format12x {
+            a: Reg(0),
+            b: Reg(1),
+        })),
+        [pair("v0", "v1")]
+    );
+    // A conversion is a cast: a copy, into both halves of the wide destination.
+    let (assigns, locals) = assign_from(Instruction::IntToLong(Format12x {
+        a: Reg(0),
+        b: Reg(2),
+    }));
+    let copies: Vec<(String, String)> = assigns
+        .iter()
+        .map(|(var, exp)| {
+            let src = exp
+                .variable_ref()
+                .expect("a conversion copies its register");
+            (local_name(&locals, var), local_name(&locals, src))
+        })
+        .collect();
+    assert_eq!(copies, [pair("v0", "v2"), pair("v1", "v2")]);
+    assert_eq!(
+        value_flows(Instruction::CmpLong(Format23x {
+            a: Reg(0),
+            b: Reg(2),
+            c: Reg(4),
+        })),
+        [
+            pair("v0", "v2"),
+            pair("v0", "v3"),
+            pair("v0", "v4"),
+            pair("v0", "v5")
+        ]
+    );
+    assert_eq!(
+        value_flows(Instruction::InstanceOf(Format22c {
+            a: Reg(0),
+            b: Reg(1),
+            idx: TypeIdx(0),
+        })),
+        [pair("v0", "v1")]
+    );
+}
+
+/// A move is a copy, not a value.
+#[test]
+fn move_is_a_copy() {
+    use dex_reader::instructions::Format12x;
+    let (assigns, locals) = assign_from(Instruction::MoveObject(Format12x {
+        a: Reg(0),
+        b: Reg(1),
+    }));
+    assert_eq!(assigns.len(), 1);
+    let (var, exp) = &assigns[0];
+    assert_eq!(local_name(&locals, var), "v0");
+    let src = exp.variable_ref().expect("a copy of a register");
+    assert_eq!(local_name(&locals, src), "v1");
+}
+
+/// A `const-method-handle` that invokes a method is a function reference to it, named as its
+/// `FunctionData` is, and the method becomes a callee so that it gets a declaration (S11). A
+/// constructor or field handle stays a `MethodHandle` object.
+#[test]
+fn const_method_handle_with_a_method_is_a_function_reference() {
+    use dex_reader::instructions::{Format21c, MethodHandleIdx};
+    use dex_reader::types::MethodHandle;
+
+    let mut parser = parser_with_method_handle_invoke();
+    // (method_handle_type, function reference?)
+    let kinds = [
+        (0x04, true),  // invoke-static
+        (0x05, true),  // invoke-instance
+        (0x07, true),  // invoke-direct
+        (0x08, true),  // invoke-interface
+        (0x06, false), // invoke-constructor
+        (0x03, false), // instance-get
+    ];
+    parser.method_handles = Some(
+        kinds
+            .iter()
+            .map(|&(method_handle_type, _)| MethodHandle {
+                method_handle_type,
+                field_or_method_id: 0,
+            })
+            .collect(),
+    );
+    let method = parser.method_ids[0];
+    let name = parser.method_signature(&method).unwrap();
+    for (i, (kind, is_ref)) in kinds.into_iter().enumerate() {
+        let mut ctx = Context::new();
+        let (assigns, _) = assign_from_in(
+            &parser,
+            &mut ctx,
+            Instruction::ConstMethodHandle(Format21c {
+                a: Reg(0),
+                idx: MethodHandleIdx(i as u32),
+            }),
+        );
+        assert_eq!(assigns.len(), 1);
+        let expected = if is_ref {
+            CallObject::FunctionPtr(name.as_str().into())
+        } else {
+            CallObject::JavaObject(JavaClass("Ljava/lang/invoke/MethodHandle;".into()))
+        };
+        assert_eq!(
+            assigns[0].1,
+            Exp::new_object_ref(expected),
+            "kind {kind:#x}"
+        );
+        assert_eq!(ctx.call_to.contains(&method), is_ref, "kind {kind:#x}");
+    }
+}
+
+/// A static field is a field of its class's global: `sput-object Foo.cb` is the store
+/// `$LFoo;.cb = v`, and `sget-object Foo.cb` the load `x = $LFoo;.cb`, the class declared once
+/// by both.
+#[test]
+fn a_static_field_is_a_field_of_its_class_global() {
+    use dex_reader::instructions::{FieldIdx, Format21c};
+    let parser = parser_with_field();
+    let mut ctx = Context::new();
+    let mut locals = Locals::default();
+    let mut stmts = Vec::new();
+    for inst in [
+        Instruction::SPutObject(Format21c {
+            a: Reg(0),
+            idx: FieldIdx(0),
+        }),
+        Instruction::SGetObject(Format21c {
+            a: Reg(0),
+            idx: FieldIdx(0),
+        }),
+    ] {
+        stmts.extend(
+            ctx.dataflow_to_assign(&parser, &dummy_code_item(), &inst, &mut locals)
+                .unwrap(),
+        );
+    }
+    let foo = ctx.globals.lookup("LFoo;").expect("the class is a global");
+    assert_eq!(ctx.globals.len(), 1);
+    let field = AccessPath::new(VariableRef::global(foo), [PathSegment::field("cb")]);
+    let store = stmts
+        .iter()
+        .any(|s| matches!(&s.kind, StatementKind::Assign { dest, .. } if *dest == field));
+    let load = stmts.iter().any(|s| {
+        matches!(&s.kind, StatementKind::Assign { dest, sources }
+            if dest.is_pathless() && sources.iter().any(|e| e.access_path() == Some(&field)))
+    });
+    assert!(store && load, "{stmts:?}");
+}
+
+/// A class's global is declared at its `class_def_item`: on the committed APK, every
+/// global the program uses that one of its dex files defines has a span of
+/// [`dex_reader::types::ClassDef::ITEM_LEN`] bytes in that dex file whose first word is the
+/// class's type index.
+#[test]
+fn a_class_global_is_declared_at_its_class_def_item() {
+    let apk = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../xtask/tests/dex/com.noto_54.apk");
+    let bytes = std::fs::read(&apk).expect("the APK");
+    let dexes = dex_reader::apk::APKParser::new(&bytes).expect("the APK parses");
+    let parsers = dexes.dex_parsers_with_filenames();
+    let info = crate::import_apk(&apk)
+        .expect("the APK imports")
+        .program_info;
+    info.program.verify().expect("the APK's program verifies");
+
+    let mut located = 0;
+    for (_, global) in info.program.globals.iter_enumerated() {
+        let Some(span) = global.span else {
+            continue;
+        };
+        let (artifact, span) = info.source_info.resolve(span).expect("the span resolves");
+        assert_eq!(
+            span.len,
+            source_info::SpanLen::ByteLen(dex_reader::types::ClassDef::ITEM_LEN)
+        );
+        let (_, parser) = &parsers[artifact.sub_artifact_id as usize];
+        let at = span.start as usize;
+        let class_idx = u32::from_le_bytes(parser.data[at..at + 4].try_into().unwrap());
+        let class_def = parser
+            .class_defs
+            .iter()
+            .find(|c| c.class_idx == class_idx)
+            .expect("the span is at a class_def_item");
+        assert_eq!(class_def.offset, span.start);
+        assert_eq!(parser.class_name(class_def).unwrap(), *global.name);
+        located += 1;
+    }
+    // The app's own classes hold statics; the framework's, which it only uses, are not in it.
+    assert!(located > 0, "no global is located");
+    assert!(
+        located < info.program.globals.len(),
+        "every global is located"
+    );
+}
+
+/// The error and each of its sources, outermost first, joined into one string.
+fn error_chain(err: &Error) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut source = std::error::Error::source(err);
+    while let Some(e) = source {
+        parts.push(e.to_string());
+        source = e.source();
+    }
+    parts.join(": ")
+}
+
+/// Imports a temp file holding `contents`, which must fail; returns the path and error chain.
+fn import_apk_of_bytes_fails(name: &str, contents: &[u8]) -> (String, String) {
+    let path = std::env::temp_dir().join(format!("ctadl_dex_{name}_{}.apk", std::process::id()));
+    std::fs::write(&path, contents).unwrap();
+    let result = import_apk(&path);
+    let _ = std::fs::remove_file(&path);
+    let Err(err) = result else {
+        panic!("{name} APK imports");
+    };
+    (path.display().to_string(), error_chain(&err))
+}
+
+#[test]
+fn import_apk_of_a_missing_file_names_it() {
+    let path = std::env::temp_dir().join(format!("ctadl_dex_missing_{}.apk", std::process::id()));
+    let Err(err) = import_apk(&path) else {
+        panic!("a missing APK imports");
+    };
+    let chain = error_chain(&err);
+    assert!(chain.contains("reading APK"), "{chain}");
+    assert!(chain.contains(&path.display().to_string()), "{chain}");
+}
+
+#[test]
+fn import_apk_of_a_non_zip_names_it() {
+    let (path, chain) = import_apk_of_bytes_fails("non_zip", b"not a zip at all");
+    assert!(chain.contains("parsing APK"), "{chain}");
+    assert!(chain.contains(&path), "{chain}");
+}
+
+#[test]
+fn import_apk_of_an_empty_file_fails() {
+    let (path, chain) = import_apk_of_bytes_fails("empty", b"");
+    assert!(chain.contains(&path), "{chain}");
 }

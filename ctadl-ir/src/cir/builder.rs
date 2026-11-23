@@ -1,0 +1,275 @@
+use crate::cir::call::CallStyle;
+use crate::cir::terminator::{Terminator, TerminatorKind};
+use crate::cir::{
+    AccessPath, BasicBlockData, BasicBlockIdx, Exp, FunctionData, GlobalIdx, LocalIdx, Locals,
+    ParameterIdx, ParameterType, PathSegment, Statement, StatementIdx, StatementKind, VariableRef,
+};
+use crate::index::idx::Idx;
+
+/// A builder for creating functions.
+#[derive(Debug)]
+pub struct FunctionBuilder<'a> {
+    function: &'a mut FunctionData,
+}
+
+impl<'a> FunctionBuilder<'a> {
+    /// Create a new FunctionBuilder wrapping an existing FunctionData
+    pub fn new(function: &'a mut FunctionData) -> Self {
+        Self { function }
+    }
+
+    /// Add a parameter to the function
+    pub fn add_param(&mut self, param_type: ParameterType) -> ParameterIdx {
+        self.function.params.push(param_type)
+    }
+
+    /// Add a new basic block to the function
+    pub fn add_block(&mut self) -> BasicBlockIdx {
+        self.function.blocks.new_block()
+    }
+
+    /// Get a builder for a specific basic block
+    pub fn at_block(&mut self, block_idx: BasicBlockIdx) -> BasicBlockBuilder<'_> {
+        // Disjoint borrow of the two separate fields of `FunctionData` so the block builder can
+        // intern locals into the same function's table while building a block.
+        BasicBlockBuilder::new(
+            &mut self.function.blocks[block_idx],
+            &mut self.function.locals,
+        )
+    }
+
+    /// Intern a local by name into the function's locals table, returning its index.
+    pub fn intern_local(&mut self, name: &str) -> LocalIdx {
+        self.function.intern_local(name)
+    }
+
+    /// Set the name of the function
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        self.function.name = name.into();
+    }
+
+    /// Set the return arity of the function
+    pub fn set_return_arity(&mut self, arity: u8) {
+        self.function.return_type.arity = arity;
+    }
+}
+
+/// A builder for creating basic blocks with convenient methods for inserting statements.
+///
+/// The BasicBlockBuilder provides an API for constructing basic blocks by allowing insertion of
+/// statements at specific positions, similar to LLVM's IRBuilder.
+#[derive(Debug)]
+pub struct BasicBlockBuilder<'a> {
+    /// Mutable reference to the basic block being constructed
+    block_data: &'a mut BasicBlockData,
+    /// Mutable reference to the enclosing function's locals table, for interning local names
+    locals: &'a mut Locals,
+    /// Current insertion point within the basic block
+    insertion_point: usize,
+}
+
+impl<'a> BasicBlockBuilder<'a> {
+    /// Create a new BasicBlockBuilder with given basic block and locals table
+    pub fn new(block_data: &'a mut BasicBlockData, locals: &'a mut Locals) -> Self {
+        Self {
+            block_data,
+            locals,
+            insertion_point: 0,
+        }
+    }
+
+    /// Set the insertion point to a specific position
+    ///
+    /// # Arguments
+    /// * `position` - The index at which to insert the next statement
+    pub fn set_insertion_point(&mut self, position: usize) {
+        self.insertion_point = position;
+    }
+
+    /// Get the current insertion point
+    pub fn get_insertion_point(&self) -> usize {
+        self.insertion_point
+    }
+
+    /// Insert a statement at the current insertion point and increment insertion point. If the
+    /// insertion point is beyond current length, this is equivalent to a push.
+    ///
+    /// # Arguments
+    /// * `statement` - The statement to insert
+    pub fn insert_statement(&mut self, statement: Statement) {
+        if self.insertion_point <= self.block_data.statements.len() {
+            self.block_data
+                .statements
+                .insert_at(StatementIdx::new(self.insertion_point), statement);
+        } else {
+            self.block_data.statements.push_back(statement);
+        }
+        self.insertion_point += 1;
+    }
+
+    /// Inserts a statement of `kind` at the insertion point and returns its index.
+    fn insert_kind(&mut self, kind: StatementKind) -> StatementIdx {
+        let current_pos = self.insertion_point;
+        self.insert_statement(Statement::new_kind(kind));
+        StatementIdx::from(current_pos as u32)
+    }
+
+    /// Create and insert an assignment statement: a copy when `dest` is a variable, a store
+    /// when it has a path.
+    ///
+    /// # Arguments
+    /// * `dest` - Destination access path
+    /// * `sources` - Source expressions
+    pub fn create_assign(
+        &mut self,
+        dest: impl Into<AccessPath>,
+        sources: impl IntoIterator<Item = Exp>,
+    ) -> StatementIdx {
+        self.insert_kind(StatementKind::assign(dest, sources))
+    }
+
+    /// Create and insert a load `dest = source.segment`, a copy.
+    pub fn create_load(
+        &mut self,
+        dest: VariableRef,
+        source: impl Into<AccessPath>,
+        segment: impl Into<PathSegment>,
+    ) -> StatementIdx {
+        self.insert_kind(StatementKind::load(dest, source, segment))
+    }
+
+    /// Create and insert a store `dest.segment = source`.
+    pub fn create_store(
+        &mut self,
+        dest: impl Into<AccessPath>,
+        segment: impl Into<PathSegment>,
+        source: impl Into<Exp>,
+    ) -> StatementIdx {
+        self.insert_kind(StatementKind::store(dest, segment, source.into()))
+    }
+
+    /// Create and insert a call statement
+    ///
+    /// # Arguments
+    /// * `style` - Call style (direct, indirect, etc.)
+    /// * `rets` - Return variables
+    /// * `args` - Argument expressions
+    pub fn create_call(
+        &mut self,
+        style: CallStyle,
+        rets: impl IntoIterator<Item = VariableRef>,
+        args: impl IntoIterator<Item = Exp>,
+    ) -> StatementIdx {
+        self.insert_kind(StatementKind::CallAssign {
+            style,
+            rets: rets.into_iter().collect(),
+            args: args.into_iter().collect(),
+        })
+    }
+
+    /// Create and insert a return terminator
+    ///
+    /// # Arguments
+    /// * `values` - Return values
+    pub fn create_ret(&mut self, values: impl IntoIterator<Item = Exp>) {
+        let terminator = Terminator::new_kind(TerminatorKind::Return {
+            args: values.into_iter().collect(),
+        });
+        self.block_data.terminator = Some(terminator);
+    }
+
+    /// Create and insert a goto terminator
+    ///
+    /// # Arguments
+    /// * `targets` - Target basic blocks
+    pub fn create_goto(&mut self, targets: impl IntoIterator<Item = crate::cir::BasicBlockIdx>) {
+        let terminator = Terminator::new_kind(TerminatorKind::Goto {
+            targets: targets.into_iter().collect(),
+        });
+        self.block_data.terminator = Some(terminator);
+    }
+
+    /// Create and insert a phi statement
+    ///
+    /// # Arguments
+    /// * `dest` - Destination variable
+    /// * `operands` - Pairs of (basic block index, variable)
+    pub fn create_phi(
+        &mut self,
+        dest: VariableRef,
+        operands: impl IntoIterator<Item = (crate::cir::BasicBlockIdx, VariableRef)>,
+    ) -> StatementIdx {
+        self.insert_kind(StatementKind::Phi {
+            dest,
+            operands: operands.into_iter().collect(),
+        })
+    }
+
+    /// Create and insert a nop statement
+    pub fn create_nop(&mut self) -> StatementIdx {
+        self.insert_kind(StatementKind::Nop)
+    }
+
+    /// Create a new local variable reference, interning `name` into the function's locals table
+    ///
+    /// # Arguments
+    /// * `name` - Variable name
+    pub fn new_local_var(&mut self, name: &str) -> VariableRef {
+        VariableRef::new_local_idx(self.locals.get_or_intern(name))
+    }
+
+    /// Intern a local by name into the function's locals table, returning its index.
+    pub fn intern_local(&mut self, name: &str) -> LocalIdx {
+        self.locals.get_or_intern(name)
+    }
+
+    /// Create a new parameter variable reference
+    ///
+    /// # Arguments
+    /// * `param_idx` - Parameter index
+    pub fn new_param_var(&self, param_idx: ParameterIdx) -> VariableRef {
+        VariableRef::new_parameter(param_idx)
+    }
+
+    /// Create a reference to the global `idx` of the program being built
+    pub fn new_global_var(&self, idx: GlobalIdx) -> VariableRef {
+        VariableRef::global(idx)
+    }
+
+    /// Create an access path from a variable and its segments.
+    ///
+    /// # Arguments
+    /// * `variable_ref` - Variable reference
+    /// * `segments` - The path
+    pub fn new_access_path(
+        &self,
+        variable_ref: VariableRef,
+        segments: impl IntoIterator<Item = PathSegment>,
+    ) -> AccessPath {
+        AccessPath::new(variable_ref, segments)
+    }
+
+    /// Create a string expression
+    ///
+    /// # Arguments
+    /// * `s` - String value
+    pub fn new_str_exp(&self, s: &str) -> Exp {
+        Exp::new_str(s)
+    }
+
+    /// Create a bytes expression
+    ///
+    /// # Arguments
+    /// * `bytes` - Byte values
+    pub fn new_bytes_exp(&self, bytes: Vec<u8>) -> Exp {
+        Exp::new_bytes(bytes)
+    }
+
+    /// Creates an integer expression.
+    ///
+    /// # Arguments
+    /// * `value` - the value of the constant, sign-extended to `i64`
+    pub fn new_int_exp(&self, value: i64) -> Exp {
+        Exp::new_int(value)
+    }
+}

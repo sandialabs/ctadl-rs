@@ -1,0 +1,51 @@
+// A callback stored under a decision: `build` stores `cb` only when `reg` is `store`, which
+// `main` passes. Into the global `g` it holds everywhere, so the call through `g` resolves.
+// Into `main2`'s `o`, through `nop`, it must not: that context never establishes the decision.
+var g;
+
+def cb(v) {
+start:
+  sink(v, Secret);
+  errsink(v, Other);
+  return;
+}
+
+def store(o, f) {
+start:
+  g.deref = f;
+  o.cb = f;
+  return;
+}
+
+def nop(o, f) {
+start:
+  return;
+}
+
+def build(reg, o) {
+start:
+  k = ptr<cb>;
+  reg(o, k);
+  return;
+}
+
+def main() {
+start:
+  s = ptr<store>;
+  build(s, o);
+  v = source(Secret);
+  h = g.deref;
+  h(v);
+  return;
+}
+
+def main2() {
+start:
+  n = ptr<nop>;
+  build(n, o);
+  w = source(Other);
+  sink(w, Other);
+  h = o.cb;
+  h(w);
+  return;
+}

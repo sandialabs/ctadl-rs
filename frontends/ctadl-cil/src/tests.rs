@@ -120,3 +120,142 @@ fn framework_assemblies() {
         assert!(!crate::is_framework_assembly(name), "{name}");
     }
 }
+
+/// Arithmetic, bitwise operations, shifts and comparisons supply values only (S19); a
+/// conversion (a cast), the operations that carry an address, and the unknown one stay copies.
+#[test]
+fn value_only_arithmetic() {
+    use cil_reader::flow::{CmpOp, ConvTarget, ConvType, Op, OpFlags, TypeOp};
+    let f = OpFlags::default();
+    let ty = TypeOp {
+        token: MetadataToken(0x0200_0002),
+    };
+    for op in [
+        Op::Add(f),
+        Op::Sub(f),
+        Op::Mul(f),
+        Op::Div(f),
+        Op::Rem(f),
+        Op::And,
+        Op::Or,
+        Op::Xor,
+        Op::Shl,
+        Op::Shr(f),
+        Op::Neg,
+        Op::Not,
+        Op::Cmp(CmpOp::Eq, f),
+        Op::Cmp(CmpOp::Lt, f),
+        Op::RefAnyType,
+    ] {
+        assert!(crate::effects::value_only(&op), "{op:?}");
+    }
+    let conv = Op::Conv(ConvTarget {
+        ty: ConvType::I4,
+        flags: f,
+    });
+    for op in [conv, Op::MkRefAny(ty), Op::RefAnyVal(ty), Op::Opaque] {
+        assert!(!crate::effects::value_only(&op), "{op:?}");
+    }
+}
+
+/// A static field's class is declared as a global once per program, however many statements
+/// name it: the emitter interns it by name.
+#[test]
+fn an_emitter_declares_a_class_global_once() {
+    use crate::method::Emitter;
+    use ctadl_ir::cir::{FunctionData, Globals};
+    let mut fdat = FunctionData::default();
+    let mut globals = Globals::default();
+    let mut em = Emitter::with_globals(&mut fdat, &mut globals);
+    let a = em.global("NS.C");
+    let b = em.global("NS.D");
+    assert_eq!(em.global("NS.C"), a);
+    assert_ne!(a, b);
+    assert_eq!(globals.len(), 2);
+    assert_eq!(globals.lookup("NS.C"), a.variable.global());
+}
+
+/// `is_cli_image` gives the same verdict as parsing the whole file read into memory.
+#[test]
+fn is_cli_image_matches_whole_file_read() {
+    use std::path::Path;
+
+    use cil_reader::Module;
+
+    use crate::is_cli_image;
+
+    fn whole_file(path: &Path) -> bool {
+        std::fs::read(path).is_ok_and(|d| Module::read(&d).is_ok())
+    }
+    fn check(path: &Path, expected: Option<bool>) {
+        let got = is_cli_image(path);
+        assert_eq!(got, whole_file(path), "{}", path.display());
+        if let Some(expected) = expected {
+            assert_eq!(got, expected, "{}", path.display());
+        }
+    }
+
+    let dir = std::env::temp_dir().join(format!("ctadl-cil-is-cli-image-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let text = dir.join("text.dll");
+    std::fs::write(&text, "not a PE image\n").unwrap();
+    check(&text, Some(false));
+    check(&dir.join("missing.dll"), Some(false));
+    let subdir = dir.join("subdir.dll");
+    std::fs::create_dir(&subdir).unwrap();
+    check(&subdir, Some(false));
+
+    match std::env::var_os("CIL_READER_FIXTURES") {
+        None => eprintln!("CIL_READER_FIXTURES unset: skipping the fixture cases"),
+        Some(fixtures) => {
+            let mut dlls: Vec<_> = std::fs::read_dir(&fixtures)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| p.extension().is_some_and(|e| e == "dll"))
+                .collect();
+            dlls.sort();
+            assert!(
+                !dlls.is_empty(),
+                "no *.dll in {}",
+                Path::new(&fixtures).display()
+            );
+            for dll in &dlls {
+                check(dll, Some(true));
+            }
+
+            let bytes = std::fs::read(&dlls[0]).unwrap();
+            let len = bytes.len();
+            for (cut, expected) in [
+                (0, Some(false)),
+                (64, Some(false)),
+                (127, Some(false)),
+                (128, None),
+                (300, None),
+                (len / 2, None),
+                (len - 1, None),
+            ] {
+                let p = dir.join(format!("truncated-{cut}.dll"));
+                std::fs::write(&p, &bytes[..cut]).unwrap();
+                check(&p, expected);
+            }
+
+            // Zero the CLI header data directory: a PE with no CLI header.
+            let mut no_cli = bytes.clone();
+            let lfanew = u32::from_le_bytes(no_cli[0x3C..0x40].try_into().unwrap()) as usize;
+            let magic = u16::from_le_bytes(no_cli[lfanew + 24..lfanew + 26].try_into().unwrap());
+            let cli_dir = match magic {
+                0x10b => lfanew + 232,
+                0x20b => lfanew + 248,
+                m => panic!("optional-header magic {m:#x}"),
+            };
+            no_cli[cli_dir..cli_dir + 8].fill(0);
+            let p = dir.join("no-cli-header.dll");
+            std::fs::write(&p, &no_cli).unwrap();
+            check(&p, Some(false));
+        }
+    }
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}

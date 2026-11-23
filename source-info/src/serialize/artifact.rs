@@ -10,7 +10,6 @@ use crate::artifact::{
     ArtifactEncoding, ArtifactMetadata, ArtifactRecord, ArtifactTable, HashAlgorithm,
 };
 use crate::serialize::leb128;
-use crate::store::ArtifactsStore;
 
 pub fn write_artifact_table(buf: &mut impl Write, table: &ArtifactTable) -> std::io::Result<()> {
     buf.write_all(&[table.metadata.hash_algorithm.to_u8()])?;
@@ -33,10 +32,7 @@ fn write_artifact_record(buf: &mut impl Write, rec: &ArtifactRecord) -> std::io:
     Ok(())
 }
 
-pub fn read_artifact_table(
-    r: &mut impl Read,
-    store: ArtifactsStore,
-) -> std::io::Result<ArtifactTable> {
+pub fn read_artifact_table(r: &mut impl Read) -> std::io::Result<ArtifactTable> {
     let mut alg = [0u8; 1];
     r.read_exact(&mut alg)?;
     let mut hash_len = [0u8; 1];
@@ -53,7 +49,7 @@ pub fn read_artifact_table(
     for _ in 0..count {
         artifacts.push(read_artifact_record(r)?);
     }
-    Ok(ArtifactTable::from_records(metadata, artifacts, store))
+    Ok(ArtifactTable::from_records(metadata, artifacts))
 }
 
 fn read_artifact_record(r: &mut impl Read) -> std::io::Result<ArtifactRecord> {

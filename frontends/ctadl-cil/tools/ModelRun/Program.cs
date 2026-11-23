@@ -1,6 +1,6 @@
 // ModelRun: calls .NET library methods with marked arguments and prints which
 // inputs reached which outputs, the reference side of xtask's `cil:models`
-// check of the default models (`defaults/cil-index.jsonl`).
+// check of the default models (`defaults/cil-index.ctadl`).
 //
 //     model-run list <classes-file>
 //     model-run run [--trials N] [--seed S] <fids-file>
@@ -20,12 +20,13 @@
 // JSON object per id:
 //
 //     {"fid": ..., "trials": n, "ran": n, "threw": {"<exception>": n}, "skip": "<why>",
-//      "flows": [{"from": [[port, [segment...]]...], "to": [port, [segment...]]}...],
+//      "flows": [{"from": [[port, path]...], "to": [port, path]}...],
 //      "depends": [[from, to]...]}
 //
 // Ports are numbered as a model numbers them: `Argument(n)` is n, with the
 // receiver (or the object a constructor makes) at 0, and `Return` is -1. A
-// path is a list of segments, `["deref", "[]"]`.
+// path is written in ctadl's path grammar (`ctadl-ir/src/cir/path_syntax.rs`):
+// `.deref.\[]`.
 //
 // Run it in an empty directory: a library call may take a marker string for a
 // file name. It never builds a file stream itself.
@@ -778,14 +779,36 @@ static class Runner
         row ["ran"] = ran;
         row ["threw"] = threw;
         row ["flows"] = flows.Values.Select (f => new Dictionary<string, object> {
-            ["from"] = f.From.Select (Parse).Select (l => new object [] { l.Port, Segments (l.Path) }).ToList (),
-            ["to"] = new object [] { f.To.Port, Segments (f.To.Path) },
+            ["from"] = f.From.Select (Parse).Select (l => new object [] { l.Port, PathText (l.Path) }).ToList (),
+            ["to"] = new object [] { f.To.Port, PathText (f.To.Path) },
         }).ToList ();
         row ["depends"] = depends.Select (d => new [] { d.Item1, d.Item2 }).ToList ();
         return JsonSerializer.Serialize (row);
     }
 
-    static string [] Segments (string path) => path.Length == 0 ? Array.Empty<string> () : path.Split (Walker.Sep);
+    // A walk's path in ctadl's path grammar. `deref` is the segment; every other name is a field,
+    // which escapes `\`, `.` and a leading `[`. No field is named `deref` or `#value`, the two
+    // names the grammar would also escape: a field is `[]` or `<[Asm]Ns.Type::name>`.
+    static string PathText (string path)
+    {
+        if (path.Length == 0)
+            return "";
+        var text = new StringBuilder ();
+        foreach (var seg in path.Split (Walker.Sep)) {
+            text.Append ('.');
+            if (seg == "deref") {
+                text.Append (seg);
+                continue;
+            }
+            for (int i = 0; i < seg.Length; i++) {
+                char c = seg [i];
+                if (c == '\\' || c == '.' || (c == '[' && i == 0))
+                    text.Append ('\\');
+                text.Append (c);
+            }
+        }
+        return text.ToString ();
+    }
 
     static string Show (Loc l) => l.Port.ToString (CultureInfo.InvariantCulture) + ":" + l.Path;
 

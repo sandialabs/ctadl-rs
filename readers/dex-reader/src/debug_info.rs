@@ -166,10 +166,10 @@ pub fn compute_line_map(
                 line = (line as i64 + *line_diff as i64) as u32;
             }
             DebugInfoOpcode::SetFile { name_idx } => {
-                if *name_idx != NO_INDEX {
-                    if let Ok(name) = strings.get(*name_idx as usize) {
-                        source_file = name;
-                    }
+                if *name_idx != NO_INDEX
+                    && let Ok(name) = strings.get(*name_idx as usize)
+                {
+                    source_file = name;
                 }
                 // NO_INDEX means "leave source file unchanged"
             }

@@ -1,0 +1,13 @@
+// S17: a source on `r` labels exactly `r` and `r.#value`, nothing under them.
+def ExactPorts() {
+s:
+  r = source(S);
+  x = r.f;
+  errsink(x, S);
+  v = r.#value;
+  sink(v, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: ExactPorts: sink(%S)#0 <- %S

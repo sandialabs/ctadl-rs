@@ -183,6 +183,8 @@ pub struct PeImage<'a> {
 pub(crate) struct StreamHeader<'a> {
     /// The name, as Latin-1.
     pub name: Cow<'a, str>,
+    /// The file offset of `data`.
+    pub offset: usize,
     pub data: &'a [u8],
 }
 
@@ -412,7 +414,11 @@ pub(crate) fn read_metadata_root(
         }
         let rest = data.get(start..).unwrap_or(&[]);
         let data = &rest[..(size as usize).min(rest.len())];
-        streams.push(StreamHeader { name, data });
+        streams.push(StreamHeader {
+            name,
+            offset: start,
+            data,
+        });
     }
     Ok((version, streams))
 }

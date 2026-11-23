@@ -1,5 +1,5 @@
-//! VMT rows: methods, parents, interfaces, abstract methods, override aliases and P/Invoke,
-//! and the walks over loaded metadata that both the aliases and virtual-call lowering
+//! VMT rows: methods, parents, interfaces, abstract methods, override bridges and P/Invoke,
+//! and the walks over loaded metadata that both the bridges and virtual-call lowering
 //! (`calls.rs`) need.
 //!
 //! | Source                                   | Row                                       |
@@ -9,13 +9,13 @@
 //! | each method that is not `abstract`       | `methods.push((cls, simple, desc, fid))`  |
 //! | each `abstract` method                   | `abstract_methods.push((cls, simple, desc))` |
 //! | each `pinvoke` method                    | `pinvokes.push((.., module, entry_point))` |
-//! | override aliases                         | `methods.push((cls, base simple, base desc, fid))` |
+//! | override bridges                         | `methods.push((cls, base simple, base desc, bridge))` |
 //!
 //! Every non-abstract method gets a row, runtime-implemented ones (a delegate's `Invoke`)
 //! included: like a Dex `native` method, a bodyless implementation still needs a row for a
 //! virtual call to resolve to it.
 //!
-//! # Override aliases
+//! # Override bridges
 //!
 //! CHA keys on `(simple name, descriptor)`. Java gets overrides across generics for free,
 //! because erasure and `javac`'s bridge methods make the descriptors match. CIL has neither:
@@ -27,15 +27,25 @@
 //!
 //! so a ``callvirt B`1<string>::M(!0)`` would never reach `D::M`. An explicit implementation
 //! (`void IFoo.Bar()`, a `MethodImpl` row) has a different name from the method it
-//! implements. [`aliases`] adds, under `D`'s class, a row with the *base's* key for each such
-//! override, so CHA walking up from the receiver's class finds `D::M` under the key the call
-//! site uses. A plain override that matches exactly makes a duplicate row, which is harmless.
+//! implements. [`aliases`] finds each such override, and the frontend does what `javac` does:
+//! it adds a bridge function `D::M(!0)` under `D`'s class with the *base's* key, whose body
+//! calls `D::M(string)`, so CHA walking up from the receiver's class finds it under the key the
+//! call site uses. An override whose key is the base's already needs none.
+//!
+//! The bridge is named by its key, unless `D` declares a different method with that key
+//! (`void IA.M()` beside a public `void M()`). There the bridge is `{key}#{declaring class}`,
+//! and its row shares the key, so a call under it reaches both bodies: CHA keys on the method,
+//! not on the interface the call site names.
 
 use cil_reader::model::{MethodDef, MethodSig, TypeDef};
 use cil_reader::token::MetadataToken;
 use cil_reader::{Entity, Module};
+use std::sync::Arc;
 
-use crate::names::{ModNames, Namer, simple_name};
+use ctadl_ir::ParameterType;
+
+use crate::method::parameters;
+use crate::names::{MethodKey, ModNames, Namer, simple_name};
 
 /// How many base types a walk follows.
 const MAX_DEPTH: usize = 64;
@@ -65,6 +75,17 @@ pub struct VirtualMethod {
     pub fid: String,
     pub newslot: bool,
     pub is_abstract: bool,
+    pub params: Vec<ParameterType>,
+}
+
+impl VirtualMethod {
+    fn key(&self) -> MethodKey {
+        MethodKey {
+            cls: self.cls.clone(),
+            simple: self.simple.clone(),
+            desc: self.own_desc.clone(),
+        }
+    }
 }
 
 /// Resolves a TypeDef, TypeRef or TypeSpec token of `module` to its definition. `vars` spells
@@ -114,17 +135,25 @@ impl<'c> Found<'c> {
             .collect()
     }
 
-    /// The type's virtual methods.
-    pub fn virtual_methods(&self, namer: &Namer<'c, '_>) -> Vec<VirtualMethod> {
-        let names = ModNames::new(self.module, namer);
-        let Ok(methods) = self.td.methods() else {
-            return Vec::new();
-        };
-        methods
-            .iter()
-            .filter(|m| m.is_virtual().unwrap_or(false))
-            .filter_map(|m| virtual_method(&names, m, self.args.as_deref()))
-            .collect()
+    /// The type's virtual methods. Remembered by the namer: a base type's are asked for again
+    /// for every type derived from it.
+    pub fn virtual_methods(&self, namer: &Namer<'c, '_>) -> Arc<[VirtualMethod]> {
+        let key = (
+            std::ptr::from_ref(self.module) as usize,
+            self.td.rid(),
+            self.args.clone(),
+        );
+        namer.virtual_methods(key, || {
+            let names = ModNames::new(self.module, namer);
+            let Ok(methods) = self.td.methods() else {
+                return Arc::from([]);
+            };
+            methods
+                .iter()
+                .filter(|m| m.is_virtual().unwrap_or(false))
+                .filter_map(|m| virtual_method(&names, m, self.args.as_deref()))
+                .collect()
+        })
     }
 
     pub fn is_sealed(&self) -> bool {
@@ -145,10 +174,10 @@ impl<'c> Found<'c> {
             let t = current?;
             if let Some(m) = t
                 .virtual_methods(namer)
-                .into_iter()
+                .iter()
                 .find(|m| m.name == name && m.inst_desc == inst_desc && !m.is_abstract)
             {
-                return Some(m);
+                return Some(m.clone());
             }
             current = t.base(namer);
         }
@@ -173,14 +202,26 @@ fn virtual_method(
         fid: key.fid(),
         newslot: m.is_newslot().unwrap_or(false),
         is_abstract: m.is_abstract().unwrap_or(false),
+        params: parameters(&sig),
     })
 }
 
-/// The override-alias rows of one type, as `(base simple, base desc, fid)` under the
-/// type's own class. Also counts the base types and interfaces whose metadata could not be
-/// read, which make no aliases.
+/// A base or interface method's key that an implementation answers, seen from the type
+/// the implementation is reached on.
+#[derive(Debug, Clone)]
+pub struct Alias {
+    pub simple: String,
+    pub desc: String,
+    /// The class declaring the base or interface method.
+    pub decl_cls: String,
+    pub target: MethodKey,
+    pub params: Vec<ParameterType>,
+}
+
+/// The override aliases of one type. Also counts the base types and interfaces whose
+/// metadata could not be read, which make no aliases.
 pub struct Aliases {
-    pub rows: Vec<(String, String, String)>,
+    pub rows: Vec<Alias>,
     pub missing_metadata: Vec<String>,
 }
 
@@ -212,10 +253,19 @@ pub fn aliases<'c>(namer: &Namer<'c, '_>, module: &'c Module<'c>, td: TypeDef<'c
             let Some(body) = names.method_key(m.token()) else {
                 continue;
             };
+            let Ok(sig) = m.signature() else {
+                continue;
+            };
             for decl in m.overrides().unwrap_or_default() {
                 if let Some(key) = names.method_key(decl) {
                     explicit.push((key.simple.clone(), key.desc.clone()));
-                    rows.push((key.simple, key.desc, body.fid()));
+                    rows.push(Alias {
+                        simple: key.simple,
+                        desc: key.desc,
+                        decl_cls: key.cls,
+                        target: body.clone(),
+                        params: parameters(&sig),
+                    });
                 }
             }
         }
@@ -245,7 +295,7 @@ pub fn aliases<'c>(namer: &Namer<'c, '_>, module: &'c Module<'c>, td: TypeDef<'c
             }
         }
     }
-    let chain_methods: Vec<Vec<VirtualMethod>> =
+    let chain_methods: Vec<Arc<[VirtualMethod]>> =
         chain.iter().map(|b| b.virtual_methods(namer)).collect();
     for m in own.iter().filter(|m| !m.newslot) {
         for methods in &chain_methods {
@@ -255,7 +305,7 @@ pub fn aliases<'c>(namer: &Namer<'c, '_>, module: &'c Module<'c>, td: TypeDef<'c
             else {
                 continue;
             };
-            rows.push((b.simple.clone(), b.own_desc.clone(), m.fid.clone()));
+            rows.push(alias(b, m));
             if b.newslot {
                 // `b` starts a slot of its own: `m` overrides nothing further up.
                 break;
@@ -293,7 +343,7 @@ pub fn aliases<'c>(namer: &Namer<'c, '_>, module: &'c Module<'c>, td: TypeDef<'c
         }
         seen.push(id);
         queue.extend(iface.interfaces(namer));
-        for b in iface.virtual_methods(namer) {
+        for b in iface.virtual_methods(namer).iter() {
             if explicit.contains(&(b.simple.clone(), b.own_desc.clone())) {
                 continue;
             }
@@ -301,15 +351,34 @@ pub fn aliases<'c>(namer: &Namer<'c, '_>, module: &'c Module<'c>, td: TypeDef<'c
                 .iter()
                 .find(|m| m.name == b.name && m.inst_desc == b.inst_desc && !m.is_abstract)
             {
-                rows.push((b.simple.clone(), b.own_desc.clone(), m.fid.clone()));
+                rows.push(alias(b, m));
             }
         }
     }
 
-    rows.sort();
-    rows.dedup();
+    // One override found by two routes (a base and an interface) is one alias.
+    rows.sort_by(|a, b| {
+        (&a.simple, &a.desc, &a.target, &a.decl_cls).cmp(&(
+            &b.simple,
+            &b.desc,
+            &b.target,
+            &b.decl_cls,
+        ))
+    });
+    rows.dedup_by(|a, b| (&a.simple, &a.desc, &a.target) == (&b.simple, &b.desc, &b.target));
     Aliases {
         rows,
         missing_metadata,
+    }
+}
+
+/// `base`'s key, answered by `implementation`.
+fn alias(base: &VirtualMethod, implementation: &VirtualMethod) -> Alias {
+    Alias {
+        simple: base.simple.clone(),
+        desc: base.own_desc.clone(),
+        decl_cls: base.cls.clone(),
+        target: implementation.key(),
+        params: implementation.params.clone(),
     }
 }

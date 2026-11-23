@@ -1,0 +1,12 @@
+source(F::return, kind = "UserInput") :-
+  fun(F, name = "produce");
+source(F::return, kind = "UserInput") :-
+  fun(F),
+  F = "produce";
+
+sink(F::arg(0), kind = "Output") :-
+  fun(F, name = "consume");
+sink(F::arg(0), kind = "Output") :-
+  fun(F),
+  F = "consume";
+

@@ -1,0 +1,28 @@
+// G6 with S8: a store through an alias of a location below a global reaches the global's path,
+// `l = g.x; l.f = a` writing `g.x.f`, which another function reads.
+var g;
+
+def Alias() {
+s:
+  l = g.x;
+  a = source(S);
+  l.f = a;
+  return;
+}
+
+def Read(): 1 {
+s:
+  r = g.x.f;
+  return r;
+}
+
+def Main() {
+s:
+  Alias();
+  b = Read();
+  sink(b, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: Main: sink(%S)#0 <- %S

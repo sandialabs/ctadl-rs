@@ -3,17 +3,5 @@
   // (15) reads another of the same size. dx builds both from one size register,
   // so lowering new-array as a copy of its size would make the two arrays copies
   // of one value.
-  "expected_lines": [],
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "source", "parent": "LArraysOfOneSize;" }],
-      "model": { "sources": [{ "kind": "UserInput", "port": "Return" }] }
-    },
-    {
-      "find": "methods",
-      "where": [{ "constraint": "signature_match", "name": "sink", "parent": "LArraysOfOneSize;" }],
-      "model": { "sinks": [{ "kind": "TaintedData", "port": "Argument(0)" }] }
-    }
-  ]
+  "expected_lines": []
 }

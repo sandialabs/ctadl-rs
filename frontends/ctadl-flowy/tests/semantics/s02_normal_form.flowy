@@ -1,0 +1,23 @@
+// S2: offsets add, `[0]` does nothing, and `#value` absorbs itself and adjacent offsets.
+def Offsets() {
+s:
+  a = source(S);
+  p.[4].[4].deref = a;
+  x = p.[8].deref;
+  sink(x, S);
+  q.[0].f = a;
+  y = q.f;
+  sink(y, S);
+  v.#value = a;
+  z = v.[8].#value;
+  sink(z, S);
+  w = v.#value.#value;
+  sink(w, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: Offsets: sink(%S)#0 <- %S
+// expect: Offsets: sink(%S)#1 <- %S
+// expect: Offsets: sink(%S)#2 <- %S
+// expect: Offsets: sink(%S)#3 <- %S

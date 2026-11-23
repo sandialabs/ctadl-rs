@@ -16,8 +16,8 @@ use crate::query_engine::formatter;
 use crate::query_engine::{QueryEndpoint, QueryFacts, QueryResult, taint_analysis};
 use ctadl_flowy as flowy;
 use ctadl_flowy::{EndpointRequires, FlowSpec, Port, PortBase, SummaryRequires, SummarySpec};
+use ctadl_ir::cir::Variable;
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::Variable;
 
 /// Loads flowy requirements for an import.
 fn load_requirements(
@@ -130,7 +130,7 @@ fn query_check_endpoints(
     let mut fail_count = 0;
     for (func_name, flow_specs) in endpoint_requires.requires {
         for (endpoint, flow_spec) in flow_specs.iter() {
-            let fx_endpoint: fx::TaintEndpoint = endpoint.into();
+            let fx_endpoint = taint_endpoint(endpoint);
             let func_id = sites.get_function_id(func_name.clone().into());
             if func_id.is_none() {
                 log::warn!("Function {func_name} not found in query results");
@@ -320,9 +320,9 @@ pub fn check_with_config<P: AsRef<Path>>(
     let mut fail_count = 0;
 
     // Models are loaded before `codegen_program`, which consumes the `ProgramInfo`. A flowy
-    // import has `VirtualMethodTable::Unknown`, so a generator matches by the IR function name
-    // directly (`ProgramMatchIndex`'s fallback arm) and gets no default models of its
-    // own. That makes flowy the cheapest place to pin what a *model port* means, which is what
+    // import has `Dispatch::Unknown` and names each function by its IR name, so a generator
+    // matches by the IR function name directly and gets no default models of its own. That
+    // makes flowy the cheapest place to pin what a *model port* means, which is what
     // `port_semantics/` uses it for.
     let match_index = crate::models::ProgramMatchIndex::new(
         &program.program_info,
@@ -351,14 +351,11 @@ pub fn check_with_config<P: AsRef<Path>>(
         crate::codegen::CallPolicy::default(),
         &model_matches,
     );
-    // No bridge specs, so nothing here can raise the model errors phase 2 reports: every one of
-    // them is about pairing two bridge sides.
     crate::codegen::model_matches::codegen_model_matches(
         &model_matches,
-        &[],
         &mut index_facts,
         &mut source_info,
-    )?;
+    );
     log::debug!("Function ID to Name mapping:");
     for (id, name) in source_info.sites.functions() {
         log::debug!("{}: {}", id.id, name.0);
@@ -391,6 +388,17 @@ pub fn check_with_config<P: AsRef<Path>>(
         )
         .err_context(|| format!("rendering index graph: {}", dot_path.display()))?;
         log::info!("Wrote index graph to '{}'", dot_path.display());
+    }
+
+    // `#value` is terminal (`ctadl_ir::cir::PathSegment::Value`).
+    for (p,) in &index_result.paths {
+        let segments: Vec<_> = p.iter().collect();
+        if let Some(i) = segments.iter().position(|s| s.is_value())
+            && i + 1 != segments.len()
+        {
+            log::warn!("admissible path with a segment after #value: {p}");
+            fail_count += 1;
+        }
     }
 
     let (ipass, ifail) = index_check_summaries(
@@ -464,24 +472,104 @@ pub fn check_with_config<P: AsRef<Path>>(
     Ok(())
 }
 
-impl From<&flowy::Endpoint> for fx::TaintEndpoint {
-    #[inline]
-    fn from(e: &flowy::Endpoint) -> Self {
-        use flowy::*;
-        use fx::*;
-        let vertex = {
-            let (var, fields) = &e.port;
-            FlowVertex(var.try_into().unwrap(), fields.into())
-        };
-        Self {
-            infunc: Function(e.infunc.clone().into()),
-            vertex,
-            label: Label(e.label.clone().into()),
-            direction: match e.direction {
-                EndpointDirection::Source => TaintDirection::Forward,
-                EndpointDirection::Sink => TaintDirection::Backward,
-            },
+/// The observable the index and the query compute for a flowy program, with no models: each sink
+/// its own label reaches, as `function: name <- label`, named as
+/// [`flowy::FlowyProgram::named_sinks`] names it. The reference implementation's observable,
+/// restricted to each sink's own label, is the same set modulo the approximations register in
+/// `docs/limitations.md`; `tests/integration/reference_parity.rs` measures the difference.
+/// A file of several programs ([`flowy::split_programs`]) is indexed as one project.
+pub fn engine_observable<P: AsRef<Path>>(
+    file: P,
+    config: IndexConfig,
+) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    let programs = flowy::compile_programs(file.as_ref())?;
+    let mut sinks: Vec<(String, String, flowy::Endpoint)> = Vec::new();
+    let mut index_facts = IndexFacts::default();
+    let mut source_info = IndexSourceInfo::default();
+    let model_matches = crate::models::ProgramModelMatches::default();
+    let mut endpoint_requires = Vec::new();
+    for program in programs {
+        sinks.extend(
+            program
+                .named_sinks()
+                .into_iter()
+                .map(|s| (s.function, s.name, s.endpoint.clone())),
+        );
+        endpoint_requires.extend(
+            program
+                .requirements
+                .endpoint_requires
+                .requires
+                .into_values()
+                .flatten()
+                .map(|(ep, _)| ep),
+        );
+        codegen_program(
+            program.program_info,
+            &mut index_facts,
+            &mut source_info,
+            CallResolutionStrategy::Mixed,
+            crate::codegen::CallPolicy::default(),
+            &model_matches,
+        );
+    }
+    let index_result =
+        taint_index_with_config(index_facts.clone(), config, Some(&source_info.sites));
+    let final_call = index_result.final_call(&index_facts.call);
+    let endpoints = endpoint_requires
+        .iter()
+        .flat_map(|e| {
+            from_flowy_endpoint(&source_info.sites, &final_call, e)
+                .into_iter()
+                .map(|ep| (ep,))
+        })
+        .collect();
+    let query_facts = QueryFacts {
+        formal_param: index_facts.formal_param,
+        actual_param: index_facts.actual_param,
+        call: final_call.clone(),
+        assign: index_result.assign_like,
+        paths: index_result.paths,
+        external_function: index_result.external_function,
+        endpoints,
+    };
+    let query_result = taint_analysis(query_facts, Some(&source_info.sites));
+    let mut out = std::collections::BTreeSet::new();
+    for (function, name, endpoint) in sinks {
+        let label = fx::Label(endpoint.label.clone().into());
+        let qes = from_flowy_endpoint(&source_info.sites, &final_call, &endpoint);
+        let reached = query_result.taint.iter().any(|r| {
+            r.4.label == label
+                && r.4.direction == fx::TaintDirection::Forward
+                && qes
+                    .iter()
+                    .any(|qe| r.0 == qe.infunc && r.2 == qe.vertex.0 && r.3 == qe.vertex.1)
+        });
+        if reached {
+            out.insert(format!("{function}: {name} <- {}", endpoint.label));
         }
+    }
+    Ok(out)
+}
+
+fn taint_endpoint(e: &flowy::Endpoint) -> fx::TaintEndpoint {
+    use flowy::*;
+    use fx::*;
+    let vertex = {
+        let port = &e.port;
+        FlowVertex::new(
+            (&port.base).try_into().unwrap(),
+            Path::from_accesses(port.segments.iter().cloned()),
+        )
+    };
+    TaintEndpoint {
+        infunc: Function(e.infunc.clone().into()),
+        vertex,
+        label: Label(e.label.clone().into()),
+        direction: match e.direction {
+            EndpointDirection::Source => TaintDirection::Forward,
+            EndpointDirection::Sink => TaintDirection::Backward,
+        },
     }
 }
 
@@ -494,8 +582,11 @@ fn flowy_endpoint_base(sites: &fx::IdMap, endpoint: &flowy::Endpoint) -> QueryEn
         .get_function_id(endpoint.infunc.clone().into())
         .unwrap();
     let vertex = {
-        let (var, fields) = &endpoint.port;
-        FlowVertex(var.try_into().unwrap(), fields.into())
+        let port = &endpoint.port;
+        FlowVertex::new(
+            (&port.base).try_into().unwrap(),
+            Path::from_accesses(port.segments.iter().cloned()),
+        )
     };
     QueryEndpoint {
         infunc,
@@ -532,17 +623,20 @@ fn from_flowy_endpoint(
     }
 }
 
-fn port_to_index(port: &Port) -> anyhow::Result<(fx::FormalIndex, fx::Path)> {
+fn port_to_index(port: &Port) -> anyhow::Result<(fx::Root, fx::Path)> {
     let Port { base, fields } = port;
     let path = fx::Path::from_accesses(fields.iter().cloned());
     match base {
         PortBase::Return => Ok(((-1i16).into(), path)),
         PortBase::Var(v) => match &v.variable {
-            Variable::Param(idx) => Ok((idx.index().try_into().unwrap(), path)),
+            Variable::Param(idx) => Ok((fx::FormalIndex::try_from(idx.index())?.into(), path)),
             Variable::Local(_) => {
                 panic!("summary requires refers to local")
             }
-            Variable::GlobalHeap => anyhow::bail!("global found in summary, not yet checked"),
+            Variable::Global(_) => {
+                unreachable!("flowy names a global port by name, `PortBase::Global`")
+            }
         },
+        PortBase::Global(name) => Ok((fx::GlobalId(fx::Str::from(name.clone())).into(), path)),
     }
 }

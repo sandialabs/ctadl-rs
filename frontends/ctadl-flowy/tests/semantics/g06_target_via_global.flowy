@@ -1,0 +1,45 @@
+// G6: a target label stored to a global in one function resolves an indirect call through
+// the global in another, with no call chain between them; and the same through a flow from one
+// global to another (a program-level edge).
+var g;
+var h;
+
+def Id(p): 1 {
+s:
+  return p;
+}
+
+def Register() {
+s:
+  g.handler = ptr<Id>;
+  return;
+}
+
+def Fire() {
+s:
+  f = g.handler;
+  a = source(S);
+  r = f(a);
+  sink(r, S);
+  return;
+}
+
+def Copy() {
+s:
+  t = g.handler;
+  h.handler = t;
+  return;
+}
+
+def FireCopied() {
+s:
+  f = h.handler;
+  a = source(T);
+  r = f(a);
+  sink(r, T);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: Fire: sink(%S)#0 <- %S
+// expect: FireCopied: sink(%T)#0 <- %T

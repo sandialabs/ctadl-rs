@@ -7,9 +7,12 @@
 //!
 //! Runs are stored in a columnar layout — a sorted `keys[]` array, a prefix-sum
 //! `offsets[]` array, and a flat `values[]` array — each section aligned so that
-//! `bytemuck::cast_slice` can view it without copying. A run is `mmap`ed once and
-//! the mapping is held inside the run, so references handed out by `get_refs` /
-//! `iter_all_refs` stay valid for as long as the map is borrowed.
+//! `bytemuck::cast_slice` can view it without copying. A map whose values are
+//! zero-sized is a set: each run holds a key at most once, with exactly one
+//! value, so its runs have no offsets or values sections, only keys and
+//! filters. A run is `mmap`ed once and the mapping is held inside the run, so
+//! references handed out by `get_refs` / `iter_all_refs` stay valid for as long
+//! as the map is borrowed.
 //!
 //! On-disk bytes are written in **native** endianness (the `mmap` is reinterpreted
 //! directly), so a run file is only portable to machines of the same endianness.
@@ -31,7 +34,7 @@ use crate::bloom::{self, Block, hash_bytes, hash_key};
 
 const DEFAULT_LEVEL_FANOUT: usize = 4;
 const RUN_MAGIC: &[u8; 4] = b"LSMM";
-const RUN_VERSION: u32 = 2;
+const RUN_VERSION: u32 = 3;
 /// The most key prefix lengths a map can keep filters for.
 const MAX_PREFIX_FILTERS: usize = 4;
 /// Fixed run header: magic(4) + version(4) + entries_count(8) + values_len(8) +
@@ -156,6 +159,7 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
     }
 
     fn offsets(&self) -> &[u64] {
+        debug_assert!(size_of::<V>() != 0, "a set run has no offsets");
         let bytes = &self.bytes
             [self.offsets_off..self.offsets_off + (self.entries_count + 1) * size_of::<u64>()];
         bytemuck::cast_slice(bytes)
@@ -198,14 +202,17 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
         if !bloom::may_contain(self.filter(self.filter_off), hash) {
             return None;
         }
-        let keys = self.keys();
-        match keys.binary_search(key) {
-            Ok(i) => {
-                let offsets = self.offsets();
-                Some(&self.values()[offsets[i] as usize..offsets[i + 1] as usize])
-            }
-            Err(_) => None,
+        let i = self.keys().binary_search(key).ok()?;
+        Some(self.values_of(i))
+    }
+
+    /// The `i`th key's values.
+    fn values_of(&self, i: usize) -> &[V] {
+        if size_of::<V>() == 0 {
+            return &self.values()[i..i + 1];
         }
+        let offsets = self.offsets();
+        &self.values()[offsets[i] as usize..offsets[i + 1] as usize]
     }
 
     /// Deletes the run's file, if it still has one.
@@ -217,11 +224,7 @@ impl<K: Pod + Ord, V: Pod> MmapRun<K, V> {
 
     /// The `i`th entry as `(&key, &values)`, both borrowing the mapping.
     fn entry(&self, i: usize) -> (&K, &[V]) {
-        let offsets = self.offsets();
-        (
-            &self.keys()[i],
-            &self.values()[offsets[i] as usize..offsets[i + 1] as usize],
-        )
+        (&self.keys()[i], self.values_of(i))
     }
 }
 
@@ -250,7 +253,8 @@ struct RunWriter {
 
 impl RunWriter {
     /// Creates the run file at `path`, sized for at most `max_entries` keys and
-    /// exactly `values_len` values of the given widths, and maps it for writing.
+    /// exactly `values_len` values of the given widths (for a set, `values_len`
+    /// is ignored), and maps it for writing.
     /// A temporary run (`keep_file == false`) is unlinked once it is mapped for
     /// reading, so it disappears with its last mapping.
     fn create<K: Pod, V: Pod>(
@@ -262,7 +266,11 @@ impl RunWriter {
     ) -> io::Result<Self> {
         let keys_off = align8(HEADER_LEN);
         let offsets_off = align8(keys_off + max_entries * size_of::<K>());
-        let values_off = align8(offsets_off + (max_entries + 1) * size_of::<u64>());
+        let values_off = if size_of::<V>() == 0 {
+            offsets_off
+        } else {
+            align8(offsets_off + (max_entries + 1) * size_of::<u64>())
+        };
         let filter_off = align8(values_off + values_len * size_of::<V>());
         let filter_blocks = bloom::blocks_for(max_entries);
         let filter_bytes = filter_blocks * size_of::<Block>();
@@ -305,8 +313,9 @@ impl RunWriter {
     }
 
     /// Begins a new entry. Must be called in ascending key order, then followed
-    /// by zero or more `append_values` calls for that entry.
-    fn start_key<K: Pod>(&mut self, key: &K) {
+    /// by zero or more `append_values` calls for that entry. For a set, each key
+    /// is started once and no values are appended.
+    fn start_key<K: Pod, V: Pod>(&mut self, key: &K) {
         assert!(self.keys_written < self.max_entries, "run overflow: keys");
         let at = self.keys_off + self.keys_written * size_of::<K>();
         self.bytes[at..at + size_of::<K>()].copy_from_slice(bytemuck::bytes_of(key));
@@ -322,7 +331,9 @@ impl RunWriter {
                 hash_bytes(&bytemuck::bytes_of(key)[..len]),
             );
         }
-        self.write_offset(self.keys_written, self.values_written);
+        if size_of::<V>() != 0 {
+            self.write_offset(self.keys_written, self.values_written);
+        }
         self.keys_written += 1;
     }
 
@@ -340,13 +351,17 @@ impl RunWriter {
     }
 
     fn finish<K: Pod + Ord, V: Pod>(mut self) -> io::Result<MmapRun<K, V>> {
-        assert_eq!(
-            self.values_written, self.values_len,
-            "run underflow: values"
-        );
         let entries_count = self.keys_written;
-        // Closing sentinel offset (== total values).
-        self.write_offset(entries_count, self.values_len);
+        if size_of::<V>() == 0 {
+            self.values_len = entries_count;
+        } else {
+            assert_eq!(
+                self.values_written, self.values_len,
+                "run underflow: values"
+            );
+            // Closing sentinel offset (== total values).
+            self.write_offset(entries_count, self.values_len);
+        }
         let header = &mut self.bytes[..HEADER_LEN];
         header[0..4].copy_from_slice(RUN_MAGIC);
         header[4..8].copy_from_slice(&RUN_VERSION.to_ne_bytes());
@@ -398,7 +413,10 @@ fn load_run<K: Pod + Ord, V: Pod>(path: PathBuf) -> io::Result<MmapRun<K, V>> {
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "invalid mmap LSM run magic",
+            format!(
+                "{}: not an mmap LSM run of version {RUN_VERSION}",
+                path.display()
+            ),
         ));
     }
     let read = |range: std::ops::Range<usize>| {
@@ -982,8 +1000,10 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
         self.count_memory();
         let mut writer = self.new_run_writer(0, memtable.keys_len(), values_len)?;
         for (key, vals) in memtable.sorted() {
-            writer.start_key(key);
-            writer.append_values(vals);
+            writer.start_key::<K, V>(key);
+            if size_of::<V>() != 0 {
+                writer.append_values(vals);
+            }
         }
         let run = writer.finish()?;
         self.push_disk_run(0, run)
@@ -1033,23 +1053,27 @@ impl<K: Pod + Ord, V: Pod> MmapLsmMultiMap<K, V> {
     /// ascending by key, so we repeatedly pick the smallest head key across the
     /// runs and copy that key's values (concatenated from every run holding it)
     /// straight into the new run's mapping, sized for the case where no two runs
-    /// share a key.
+    /// share a key. A set writes each distinct key once.
     fn merge_runs(&mut self, level: usize, runs: Vec<MmapRun<K, V>>) -> io::Result<MmapRun<K, V>> {
         let max_entries = runs.iter().map(|run| run.entries_count).sum();
         let values_len = runs.iter().map(|run| run.values_len).sum();
         let mut writer = self.new_run_writer(level, max_entries, values_len)?;
-        let sections: Vec<_> = runs
-            .iter()
-            .map(|run| (run.keys(), run.offsets(), run.values()))
-            .collect();
-        let keys: Vec<&[K]> = sections.iter().map(|&(keys, _, _)| keys).collect();
-        merge_keys(&keys, |key, holders| {
-            writer.start_key(key);
-            for &(r, i) in holders {
-                let (_, offsets, values) = sections[r];
-                writer.append_values(&values[offsets[i] as usize..offsets[i + 1] as usize]);
-            }
-        });
+        let keys: Vec<&[K]> = runs.iter().map(|run| run.keys()).collect();
+        if size_of::<V>() == 0 {
+            merge_keys(&keys, |key, _| writer.start_key::<K, V>(key));
+        } else {
+            let sections: Vec<_> = runs
+                .iter()
+                .map(|run| (run.offsets(), run.values()))
+                .collect();
+            merge_keys(&keys, |key, holders| {
+                writer.start_key::<K, V>(key);
+                for &(r, i) in holders {
+                    let (offsets, values) = sections[r];
+                    writer.append_values(&values[offsets[i] as usize..offsets[i + 1] as usize]);
+                }
+            });
+        }
         let new_run = writer.finish()?;
         for run in runs {
             run.delete();
@@ -1358,6 +1382,103 @@ mod tests {
             );
         }
         assert_eq!(set.iter_all_refs().count(), 20);
+    }
+
+    /// The one run file in `dir`.
+    fn only_run_file(dir: &Path) -> PathBuf {
+        let runs: Vec<PathBuf> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|e| e == "lsm"))
+            .collect();
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        runs.into_iter().next().unwrap()
+    }
+
+    /// A set's run holds its header, keys and filters, and nothing else.
+    #[test]
+    fn set_run_has_no_offsets() {
+        let dir = temp_dir("set-run");
+        {
+            let mut set = MmapLsmMultiMap::<[u64; 2], ()>::open(&dir, 1000)
+                .unwrap()
+                .with_prefix_reads(&[8]);
+            for i in 0..100u64 {
+                set.insert([i % 7, i], ());
+            }
+            set.flush().unwrap();
+        }
+        let path = only_run_file(&dir);
+        let file_len = fs::metadata(&path).unwrap().len() as usize;
+        let run = load_run::<[u64; 2], ()>(path).unwrap();
+        assert_eq!(run.entries_count, 100);
+        assert_eq!(run.values_len, 100);
+        assert_eq!(run.offsets_off, run.values_off);
+        assert_eq!(run.values_off, run.filter_off);
+        assert_eq!(run.prefix_filters.len(), 1);
+        assert_eq!(
+            file_len,
+            run.filter_off + 2 * run.filter_blocks * size_of::<Block>()
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A set writes a key once, however many times the memtable or the merged
+    /// runs hold it.
+    #[test]
+    fn set_duplicates_collapse() {
+        let mut set = MmapLsmMultiMap::<u64, ()>::with_memtable_limit(1000);
+        for k in [1, 2, 1, 3, 2, 1] {
+            set.insert(k, ());
+        }
+        set.flush().unwrap();
+        assert_eq!(set.levels[0][0].entries_count, 3);
+        for k in 1..=3 {
+            assert_eq!(set.get_refs(&k).unwrap().count(), 1, "key {k}");
+        }
+
+        // Three runs of the same four keys: the third flush merges them.
+        let mut set = MmapLsmMultiMap::<u64, ()>::with_memtable_limit_and_level_fanout(4, 2);
+        for _ in 0..2 {
+            for k in 0..4 {
+                set.insert(k, ());
+            }
+        }
+        assert_eq!(set.levels[0].len(), 2);
+        for k in 0..4 {
+            assert_eq!(set.get_refs(&k).unwrap().count(), 2, "key {k}");
+        }
+        for k in 0..4 {
+            set.insert(k, ());
+        }
+        assert!(set.levels[0].is_empty());
+        assert_eq!(set.levels[1].len(), 1);
+        assert_eq!(set.levels[1][0].entries_count, 4);
+        for k in 0..4 {
+            assert_eq!(set.get_refs(&k).unwrap().count(), 1, "key {k}");
+        }
+        let values: usize = set.iter_all_refs().map(|(_, vals)| vals.count()).sum();
+        assert_eq!(values, 4);
+    }
+
+    /// A run file of an older version is rejected, not misread.
+    #[test]
+    fn old_run_version_rejected() {
+        let dir = temp_dir("old-version");
+        {
+            let mut set = MmapLsmMultiMap::<u64, ()>::open(&dir, 1000).unwrap();
+            set.insert(1, ());
+            set.flush().unwrap();
+        }
+        let path = only_run_file(&dir);
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[4..8].copy_from_slice(&2u32.to_ne_bytes());
+        fs::write(&path, bytes).unwrap();
+        let Err(err) = MmapLsmMultiMap::<u64, ()>::open(&dir, 1000) else {
+            panic!("a version-2 run was accepted");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let _ = fs::remove_dir_all(dir);
     }
 
     /// `absorb` keeps every value of both maps, whether it sat in a memtable or a

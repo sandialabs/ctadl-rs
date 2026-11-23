@@ -6,10 +6,10 @@
 //! mdb corpus's mscorlib.dll, which defines it, where Cecil's resolver finds
 //! the framework's.
 
-use super::{cecil_root, read_fixture, read_resource, Test};
+use super::{Test, cecil_root, read_fixture, read_resource};
+use cil_reader::model::AssemblyName;
 use cil_reader::model::custom_attributes::{CaArgument, CaValue, CustomAttribute};
 use cil_reader::model::resolver::{AssemblyCache, AssemblyLoader};
-use cil_reader::model::AssemblyName;
 use cil_reader::{MetadataToken, Module};
 use std::fmt::Write as _;
 

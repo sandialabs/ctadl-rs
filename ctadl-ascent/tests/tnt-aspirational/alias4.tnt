@@ -59,7 +59,7 @@ def recv_entry() {
   engn_del(r2v2, u0, r4v0);
 }
 
-// This is just here to add to the access path set
+// This is just here to add to the path set
 def Paths() {
   x.mEng.runnable.this0 = y;
   x.runnable.this0 = y;

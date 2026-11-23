@@ -1,0 +1,14 @@
+// S3: an address holds no labels of its own; its labels are its base's. `p = q.[8]` with `q`
+// tainted taints `p`, while the memory at the address is a different location.
+def AddressReadsBase() {
+s:
+  q = source(S);
+  p = q.[8];
+  sink(p, S);
+  m = p.deref;
+  errsink(m, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: AddressReadsBase: sink(%S)#0 <- %S

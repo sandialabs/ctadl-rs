@@ -1,7 +1,7 @@
 //! Ported from Test/Mono.Cecil.Tests/NestedTypesTests.cs (read subset).
 //! Skipped: NestedTypeFullName (constructs definitions).
 
-use super::{read_fixture, read_resource, Test};
+use super::{Test, read_fixture, read_resource};
 use cil_reader::Module;
 
 // Test/Mono.Cecil.Tests/NestedTypesTests.cs:12 (NestedTypes)

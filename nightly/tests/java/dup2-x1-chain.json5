@@ -1,43 +1,5 @@
 {
   // No flow: o is tainted (14), but x = o.v = y (16) copies the clean long y.
   // As DupX1Chain, with a long field, which javac copies with dup2_x1.
-  "expected_lines": [],
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [
-        {
-          "constraint": "signature_match",
-          "name": "source",
-          "parent": "LDup2X1Chain;"
-        }
-      ],
-      "model": {
-        "sources": [
-          {
-            "kind": "UserInput",
-            "port": "Return"
-          }
-        ]
-      }
-    },
-    {
-      "find": "methods",
-      "where": [
-        {
-          "constraint": "signature_match",
-          "name": "sink",
-          "parent": "LDup2X1Chain;"
-        }
-      ],
-      "model": {
-        "sinks": [
-          {
-            "kind": "TaintedData",
-            "port": "Argument(0)"
-          }
-        ]
-      }
-    }
-  ]
+  "expected_lines": []
 }

@@ -4,8 +4,45 @@ use std::sync::OnceLock;
 use crate::{error::*, instructions::DispArg, parse_utils::*, types::*};
 
 /// Cache for lazily computed parser-derived data.
+#[derive(Default)]
 pub struct Cache<'a> {
     pub pool: OnceLock<DexConstantPool<'a>>,
+    /// Per `method_id`, its full signature, built on first use by [`DexParser::method_names`].
+    methods: OnceLock<Box<[OnceLock<CachedMethod>]>>,
+    /// Per `field_id`, its pretty name, built on first use by [`DexParser::field_pretty_name`].
+    fields: OnceLock<Box<[OnceLock<Box<str>>]>>,
+}
+
+/// A method's full signature `Lcls;->name(params)ret`, with where its parts end.
+struct CachedMethod {
+    signature: Box<str>,
+    class_len: usize,
+    name_len: usize,
+}
+
+/// The names of a method, borrowed from [`DexParser::method_names`]'s cache: the parts of
+/// [`DexParser::method_triple`] and the [`DexParser::method_signature`] they make.
+#[derive(Debug, Clone, Copy)]
+pub struct MethodNames<'s> {
+    /// `Lcls;->name(params)ret`.
+    pub signature: &'s str,
+    /// `Lcls;`.
+    pub class: &'s str,
+    /// `name`.
+    pub name: &'s str,
+    /// `(params)ret`.
+    pub descriptor: &'s str,
+}
+
+/// The slot for entry `idx` of a lazily allocated per-id table of `len` entries.
+fn cache_slot<T>(
+    table: &OnceLock<Box<[OnceLock<T>]>>,
+    idx: usize,
+    len: usize,
+) -> Option<&OnceLock<T>> {
+    table
+        .get_or_init(|| (0..len).map(|_| OnceLock::new()).collect())
+        .get(idx)
 }
 
 pub const DEX_MAGIC_035: &[u8; 8] = b"dex\n035\0";
@@ -103,9 +140,7 @@ impl<'a> DexParser<'a> {
             class_defs,
             call_site_ids,
             method_handles,
-            cache: Cache {
-                pool: OnceLock::new(),
-            },
+            cache: Cache::default(),
         })
     }
 
@@ -117,10 +152,7 @@ impl<'a> DexParser<'a> {
     fn build_constant_pool(&self) -> DexConstantPool<'a> {
         DexConstantPool::new(
             self.data,
-            StringTable {
-                data: self.data,
-                string_ids: self.strings.string_ids.clone(),
-            },
+            self.strings.share(),
             self.type_ids.clone(),
             self.proto_ids.clone(),
             self.field_ids.clone(),
@@ -236,6 +268,54 @@ impl<'a> DexParser<'a> {
 
     pub fn method_triple(&self, method: &MethodId) -> DexResult<(String, String, String)> {
         method.vmt_triple(&self.strings, &self.type_ids, &self.proto_ids, self.data)
+    }
+
+    /// The names of `method_ids[idx]`, built on first use and then borrowed. The same strings as
+    /// [`DexParser::method_triple`] and [`DexParser::method_signature`].
+    pub fn method_names(&self, idx: usize) -> DexResult<MethodNames<'_>> {
+        let method = self
+            .method_ids
+            .get(idx)
+            .ok_or(DexError::InvalidDex("method_idx out of bounds"))?;
+        let slot =
+            cache_slot(&self.cache.methods, idx, self.method_ids.len()).expect("idx is in bounds");
+        let cached = match slot.get() {
+            Some(c) => c,
+            None => {
+                let (class, name, descriptor) = self.method_triple(method)?;
+                let signature = format!("{class}->{name}{descriptor}").into_boxed_str();
+                slot.get_or_init(|| CachedMethod {
+                    signature,
+                    class_len: class.len(),
+                    name_len: name.len(),
+                })
+            }
+        };
+        let sig = &*cached.signature;
+        let name_start = cached.class_len + 2;
+        let name_end = name_start + cached.name_len;
+        Ok(MethodNames {
+            signature: sig,
+            class: &sig[..cached.class_len],
+            name: &sig[name_start..name_end],
+            descriptor: &sig[name_end..],
+        })
+    }
+
+    /// The pretty name `Lcls;->name:type` of `field_ids[idx]`, built once and then borrowed.
+    /// The same string as [`FieldId::pretty_name`].
+    pub fn field_pretty_name(&self, idx: usize) -> DexResult<&str> {
+        let field = self
+            .field_ids
+            .get(idx)
+            .ok_or(DexError::InvalidDex("field_idx out of bounds"))?;
+        let slot =
+            cache_slot(&self.cache.fields, idx, self.field_ids.len()).expect("idx is in bounds");
+        if let Some(name) = slot.get() {
+            return Ok(name);
+        }
+        let name = field.pretty_name(self.constant_pool())?.into_boxed_str();
+        Ok(slot.get_or_init(|| name))
     }
 
     pub fn field_name(&self, field: &FieldId) -> DexResult<String> {
@@ -596,7 +676,7 @@ pub fn parse_string_ids<'a>(data: &'a [u8], header: &DexHeader) -> DexResult<Str
         string_ids.push(StringId { string_data_off });
     }
 
-    Ok(StringTable { data, string_ids })
+    Ok(StringTable::new(data, string_ids))
 }
 
 impl<'a> StringTable<'a> {
@@ -622,9 +702,43 @@ impl<'a> StringTable<'a> {
     /// one; string *constants* should use [`StringTable::get_lossy`] or
     /// [`DexString::code_units`] instead.
     pub fn get(&self, index: usize) -> DexResult<String> {
-        self.get_dex_string(index)?
-            .into_string()
-            .map_err(|e| e.with_string_index(index))
+        self.get_str(index).map(String::from)
+    }
+
+    /// [`StringTable::get`] without the copy: the entry is decoded once and kept, and every
+    /// later call borrows it.
+    pub fn get_str(&self, index: usize) -> DexResult<&str> {
+        let decoded = self.decoded(index)?;
+        if decoded.exact {
+            return Ok(&decoded.text);
+        }
+        // Not valid text: decode again for the error, which names the offending code unit.
+        // Rare enough not to be worth caching.
+        match self.get_dex_string(index)?.into_string() {
+            Err(e) => Err(e.with_string_index(index)),
+            Ok(_) => unreachable!("an entry that decodes exactly is cached as exact"),
+        }
+    }
+
+    /// [`StringTable::get_lossy`] without the copy.
+    pub fn get_lossy_str(&self, index: usize) -> DexResult<&str> {
+        Ok(&self.decoded(index)?.text)
+    }
+
+    /// Entry `index`, decoded on first use and kept.
+    fn decoded(&self, index: usize) -> DexResult<&DecodedString> {
+        let slot = self
+            .decoded
+            .slot(index, self.string_ids.len())
+            .ok_or(DexError::InvalidDex("string index out of bounds"))?;
+        if let Some(d) = slot.get() {
+            return Ok(d);
+        }
+        let s = self.get_dex_string(index)?;
+        let exact = !matches!(s, DexString::Utf16(_));
+        let text = s.to_string_lossy().into_owned().into_boxed_str();
+        // Another thread may have decoded the same entry meanwhile; both results are equal.
+        Ok(slot.get_or_init(|| DecodedString { text, exact }))
     }
 
     /// A string table entry with unpaired surrogates replaced by `U+FFFD`.
@@ -632,7 +746,7 @@ impl<'a> StringTable<'a> {
     /// For string constants and diagnostics, which must not fail just because
     /// the DEX file carries UTF-16 data a `str` cannot hold.
     pub fn get_lossy(&self, index: usize) -> DexResult<String> {
-        Ok(self.get_dex_string(index)?.to_string_lossy().into_owned())
+        self.get_lossy_str(index).map(String::from)
     }
 }
 
@@ -662,6 +776,11 @@ pub fn parse_type_ids(data: &[u8], header: &DexHeader) -> DexResult<Vec<TypeId>>
 impl TypeId {
     pub fn descriptor<'a>(&self, strings: &StringTable<'a>) -> DexResult<String> {
         strings.get(self.descriptor_idx as usize)
+    }
+
+    /// [`TypeId::descriptor`], borrowed from the table's decoded entries.
+    pub fn descriptor_str<'s>(&self, strings: &'s StringTable<'_>) -> DexResult<&'s str> {
+        strings.get_str(self.descriptor_idx as usize)
     }
 }
 
@@ -841,6 +960,7 @@ pub fn parse_class_defs(data: &[u8], header: &DexHeader) -> DexResult<Vec<ClassD
         let static_values_off = read_u32_le(data, off + 28)?;
 
         class_defs.push(ClassDef {
+            offset: off as u32,
             class_idx,
             access_flags,
             superclass_idx,
@@ -856,6 +976,9 @@ pub fn parse_class_defs(data: &[u8], header: &DexHeader) -> DexResult<Vec<ClassD
 }
 
 impl ClassDef {
+    /// The length of a `class_def_item`.
+    pub const ITEM_LEN: u32 = 32;
+
     pub fn class_name<'a>(
         &self,
         type_ids: &[TypeId],
@@ -996,7 +1119,7 @@ fn parse_catch_handler_list(data: &[u8], list_off: usize) -> DexResult<CatchHand
         let (raw_size, p) = read_sleb128(data, pos)?;
         pos = p;
 
-        let count = raw_size.abs() as u32;
+        let count = raw_size.unsigned_abs();
         let mut pairs = Vec::with_capacity(count as usize);
 
         for _ in 0..count {
@@ -1055,7 +1178,7 @@ pub fn parse_code_item(data: &[u8], offset: u32) -> DexResult<CodeItem> {
 
     // 4-byte alignment for tries
     let mut next_offset = insns_offset + insns_size * 2;
-    if tries_size > 0 && next_offset % 4 != 0 {
+    if tries_size > 0 && !next_offset.is_multiple_of(4) {
         next_offset += 2; // padding
     }
 
@@ -1093,7 +1216,7 @@ pub fn parse_code_item(data: &[u8], offset: u32) -> DexResult<CodeItem> {
 }
 
 impl EncodedMethod {
-    pub fn code<'a>(&self, data: &'a [u8]) -> DexResult<Option<CodeItem>> {
+    pub fn code(&self, data: &[u8]) -> DexResult<Option<CodeItem>> {
         if self.code_off == 0 {
             return Ok(None); // abstract or native
         }
@@ -1165,14 +1288,12 @@ pub fn call_indices_before_move_result(items: &[DecodedCodeItem]) -> Vec<usize> 
     let mut out = Vec::new();
     let end = items.len().saturating_sub(1);
     for i in 0..end {
-        if let DecodedCodeItem::Instruction { inst, .. } = &items[i] {
-            if inst.is_invoke() {
-                if let DecodedCodeItem::Instruction { inst: next, .. } = &items[i + 1] {
-                    if next.is_move_result() {
-                        out.push(i);
-                    }
-                }
-            }
+        if let DecodedCodeItem::Instruction { inst, .. } = &items[i]
+            && inst.is_invoke()
+            && let DecodedCodeItem::Instruction { inst: next, .. } = &items[i + 1]
+            && next.is_move_result()
+        {
+            out.push(i);
         }
     }
     out
@@ -1191,7 +1312,7 @@ pub fn decode_code_item(code: &CodeItem) -> Vec<DecodedCodeItem> {
             0x0100 => {
                 // packed-switch-payload
                 // Format: size (ushort), first_key (sint), targets[] (sint array)
-                let size = insns[pc + 1] as u16;
+                let size = insns[pc + 1];
                 let first_key = {
                     let low = insns[pc + 2] as i32;
                     let high = insns[pc + 3] as i32;
@@ -1224,7 +1345,7 @@ pub fn decode_code_item(code: &CodeItem) -> Vec<DecodedCodeItem> {
             0x0200 => {
                 // sparse-switch-payload
                 // Format: size (ushort), keys[] (sint array), targets[] (sint array)
-                let size = insns[pc + 1] as u16;
+                let size = insns[pc + 1];
 
                 let mut keys = Vec::with_capacity(size as usize);
                 for i in 0..size as usize {
@@ -1263,7 +1384,7 @@ pub fn decode_code_item(code: &CodeItem) -> Vec<DecodedCodeItem> {
             0x0300 => {
                 // fill-array-data-payload
                 // Format: element_width (ushort), size (uint), data[] (ubyte array)
-                let element_width = insns[pc + 1] as u16;
+                let element_width = insns[pc + 1];
                 let size = {
                     let low = insns[pc + 2] as u32;
                     let high = insns[pc + 3] as u32;
@@ -1273,7 +1394,7 @@ pub fn decode_code_item(code: &CodeItem) -> Vec<DecodedCodeItem> {
                 // Data starts at pc + 4, and spans size * element_width bytes
                 // Since insns is u16 array, we need to extract bytes carefully
                 let data_size = (size as usize) * (element_width as usize);
-                let data_words = (data_size + 1) / 2; // Round up to u16 boundary
+                let data_words = data_size.div_ceil(2); // Round up to u16 boundary
                 let mut data = Vec::with_capacity(data_size);
 
                 for i in 0..data_words {
@@ -1290,7 +1411,7 @@ pub fn decode_code_item(code: &CodeItem) -> Vec<DecodedCodeItem> {
                 // Truncate to exact size
                 data.truncate(data_size);
 
-                let width = (data_size + 1) / 2 + 4; // Round up to u16 boundary + header
+                let width = data_size.div_ceil(2) + 4; // Round up to u16 boundary + header
                 out.push(DecodedCodeItem::Payload {
                     offset: pc,
                     payload: crate::instructions::PayloadInstruction::FillArrayData(
@@ -1431,7 +1552,10 @@ impl FieldId {
     }
 }
 
-pub fn disassemble_code_item_with_constants(code: &CodeItem, cp: &DexConstantPool) -> Vec<String> {
+pub fn disassemble_code_item_with_constants(
+    code: &CodeItem,
+    cp: &DexConstantPool<'_>,
+) -> Vec<String> {
     let instructions = decode_code_item(code);
     let mut result = Vec::with_capacity(instructions.len());
 

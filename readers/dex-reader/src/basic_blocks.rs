@@ -25,10 +25,10 @@ pub fn control_flow_targets(code: &CodeItem, items: &[DecodedCodeItem]) -> BTree
             for handler in protected_handler_targets(code, *pc) {
                 starts.insert(handler);
             }
-            if inst.can_throw() {
-                if let Some(next) = fall_through {
-                    starts.insert(next);
-                }
+            if inst.can_throw()
+                && let Some(next) = fall_through
+            {
+                starts.insert(next);
             }
         }
 
@@ -66,7 +66,7 @@ pub fn control_flow_targets(code: &CodeItem, items: &[DecodedCodeItem]) -> BTree
             | Instruction::IfGez(f)
             | Instruction::IfGtz(f)
             | Instruction::IfLez(f) => {
-                let tgt = f.tgt as i32;
+                let tgt = f.tgt;
                 add_target(&mut starts, *pc, tgt);
                 if let Some(next) = fall_through {
                     starts.insert(next);
@@ -77,15 +77,14 @@ pub fn control_flow_targets(code: &CodeItem, items: &[DecodedCodeItem]) -> BTree
                     starts.insert(next);
                 }
                 let payload_offset = (*pc as i32 + f.tgt) as usize;
-                if let Some(payload) = items.iter().find(|it| it.offset() == payload_offset) {
-                    if let DecodedCodeItem::Payload {
+                if let Some(payload) = items.iter().find(|it| it.offset() == payload_offset)
+                    && let DecodedCodeItem::Payload {
                         offset: _,
                         payload: p,
                     } = payload
-                    {
-                        for &rel in p.targets() {
-                            add_target(&mut starts, *pc, rel);
-                        }
+                {
+                    for &rel in p.targets() {
+                        add_target(&mut starts, *pc, rel);
                     }
                 }
             }
@@ -102,12 +101,11 @@ pub fn control_flow_targets(code: &CodeItem, items: &[DecodedCodeItem]) -> BTree
 }
 
 fn add_target(starts: &mut BTreeSet<usize>, pc: usize, offset: i32) {
-    if let Ok(delta) = i32::try_from(pc) {
-        if let Some(t) = delta.checked_add(offset) {
-            if t >= 0 {
-                starts.insert(t as usize);
-            }
-        }
+    if let Ok(delta) = i32::try_from(pc)
+        && let Some(t) = delta.checked_add(offset)
+        && t >= 0
+    {
+        starts.insert(t as usize);
     }
 }
 
@@ -240,10 +238,10 @@ pub fn block_successors(code: &CodeItem, items: &[DecodedCodeItem]) -> Vec<Vec<u
                 }
                 if inst.can_throw() {
                     for target in protected_handler_targets(code, pc) {
-                        if let Some(&b) = offset_to_block.get(&target) {
-                            if !s.contains(&b) {
-                                s.push(b);
-                            }
+                        if let Some(&b) = offset_to_block.get(&target)
+                            && !s.contains(&b)
+                        {
+                            s.push(b);
                         }
                     }
                 }
@@ -286,10 +284,10 @@ pub fn block_successors(code: &CodeItem, items: &[DecodedCodeItem]) -> Vec<Vec<u
                     | Instruction::IfLe(f) => {
                         let tgt = f.tgt as i32;
                         let mut s = Vec::with_capacity(2);
-                        if let Some(t) = resolve_target(pc, tgt) {
-                            if let Some(&b) = offset_to_block.get(&t) {
-                                s.push(b);
-                            }
+                        if let Some(t) = resolve_target(pc, tgt)
+                            && let Some(&b) = offset_to_block.get(&t)
+                        {
+                            s.push(b);
                         }
                         if let Some(b) = fall_through_block {
                             s.push(b);
@@ -302,12 +300,12 @@ pub fn block_successors(code: &CodeItem, items: &[DecodedCodeItem]) -> Vec<Vec<u
                     | Instruction::IfGez(f)
                     | Instruction::IfGtz(f)
                     | Instruction::IfLez(f) => {
-                        let tgt = f.tgt as i32;
+                        let tgt = f.tgt;
                         let mut s = Vec::with_capacity(2);
-                        if let Some(t) = resolve_target(pc, tgt) {
-                            if let Some(&b) = offset_to_block.get(&t) {
-                                s.push(b);
-                            }
+                        if let Some(t) = resolve_target(pc, tgt)
+                            && let Some(&b) = offset_to_block.get(&t)
+                        {
+                            s.push(b);
                         }
                         if let Some(b) = fall_through_block {
                             s.push(b);
@@ -321,20 +319,17 @@ pub fn block_successors(code: &CodeItem, items: &[DecodedCodeItem]) -> Vec<Vec<u
                         }
                         let payload_offset = (pc as i32 + f.tgt) as usize;
                         if let Some(payload) = items.iter().find(|it| it.offset() == payload_offset)
-                        {
-                            if let DecodedCodeItem::Payload {
+                            && let DecodedCodeItem::Payload {
                                 offset: _,
                                 payload: p,
                             } = payload
-                            {
-                                for &rel in p.targets() {
-                                    if let Some(t) = resolve_target(pc, rel) {
-                                        if let Some(&b) = offset_to_block.get(&t) {
-                                            if !s.contains(&b) {
-                                                s.push(b);
-                                            }
-                                        }
-                                    }
+                        {
+                            for &rel in p.targets() {
+                                if let Some(t) = resolve_target(pc, rel)
+                                    && let Some(&b) = offset_to_block.get(&t)
+                                    && !s.contains(&b)
+                                {
+                                    s.push(b);
                                 }
                             }
                         }
@@ -351,10 +346,10 @@ pub fn block_successors(code: &CodeItem, items: &[DecodedCodeItem]) -> Vec<Vec<u
 
                 if inst.can_throw() {
                     for target in protected_handler_targets(code, pc) {
-                        if let Some(&b) = offset_to_block.get(&target) {
-                            if !succs.contains(&b) {
-                                succs.push(b);
-                            }
+                        if let Some(&b) = offset_to_block.get(&target)
+                            && !succs.contains(&b)
+                        {
+                            succs.push(b);
                         }
                     }
                 }

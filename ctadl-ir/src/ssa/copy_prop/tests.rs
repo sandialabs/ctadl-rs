@@ -5,8 +5,8 @@ use smallvec::smallvec;
 use crate::index::idx::Idx;
 
 thread_local! {
-    static LOCALS: std::cell::RefCell<crate::mir::Locals> =
-        std::cell::RefCell::new(crate::mir::Locals::default());
+    static LOCALS: std::cell::RefCell<crate::cir::Locals> =
+        std::cell::RefCell::new(crate::cir::Locals::default());
 }
 
 fn intern(name: &str) -> VariableRef {
@@ -25,7 +25,7 @@ fn bare(name: &str) -> VariableRef {
 }
 
 fn read(var: VariableRef) -> Exp {
-    Exp::Variable(var)
+    Exp::variable(var)
 }
 
 /// A pure copy `dest = src`.
@@ -270,7 +270,7 @@ fn load_is_not_a_copy() {
         vec![Statement::new_kind(StatementKind::load(
             v("x", 2),
             v("y", 1),
-            FieldRef::symbol("f"),
+            PathSegment::field("f"),
         ))],
         vec![read(v("x", 2))],
     );
@@ -410,4 +410,36 @@ fn program_entry_point_runs_on_every_function() {
         term_srcs(&program.functions[FunctionIdx::new(1)], 0),
         vec![v("y", 1)]
     );
+}
+
+#[test]
+fn value_source_is_not_a_copy() {
+    // t_1 = value(a_1); return t_1   =>   unchanged: `t` gets `a`'s value, not `a` itself
+    let mut f = one_block(
+        vec![Statement::new_kind(StatementKind::assign(
+            v("t", 1),
+            [Exp::value(v("a", 1))],
+        ))],
+        vec![read(v("t", 1))],
+    );
+    assert_eq!(propagate_copies_function(&mut f), 0);
+    assert_eq!(kinds(&f, 0).len(), 1);
+    assert_eq!(term_srcs(&f, 0), vec![v("t", 1)]);
+}
+
+#[test]
+fn value_use_is_rewritten_through_a_copy() {
+    // x_2 = x_1; t_1 = value(x_2); return t_1   =>   t_1 = value(x_1)
+    let mut f = one_block(
+        vec![
+            copy(v("x", 2), v("x", 1)),
+            Statement::new_kind(StatementKind::assign(v("t", 1), [Exp::value(v("x", 2))])),
+        ],
+        vec![read(v("t", 1))],
+    );
+    assert_eq!(propagate_copies_function(&mut f), 1);
+    let StatementKind::Assign { sources, .. } = kinds(&f, 0)[0] else {
+        panic!("expected assign");
+    };
+    assert_eq!(sources.as_slice(), &[Exp::value(v("x", 1))]);
 }

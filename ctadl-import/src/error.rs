@@ -26,7 +26,7 @@ pub enum Error {
     #[error("bitcode error")]
     Bitcode(#[from] bitcode::Error),
     #[error("IR verify error")]
-    Verify(#[from] ctadl_ir::mir::VerifyErrors),
+    Verify(#[from] ctadl_ir::cir::VerifyErrors),
     #[error("source-info serialization error")]
     SourceInfoParquet(#[from] source_info::parquet_io::ParquetError),
 
@@ -57,6 +57,11 @@ pub enum Error {
     #[cfg(feature = "ts")]
     #[error("tree-sitter parse error: {0}")]
     TreeSitterParse(String),
+
+    /// A frontend produced a name table that does not describe its functions (see
+    /// [`ctadl_ir::call::VirtualMethodTable::check_names`]): a frontend bug.
+    #[error("name table error: {0}")]
+    Names(String),
 
     /// The artifact was read without trouble and simply contained no code. A split APK that
     /// holds only resources is one example. This is not a decoding error: nothing is

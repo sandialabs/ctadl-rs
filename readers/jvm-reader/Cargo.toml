@@ -1,7 +1,11 @@
 [package]
 name = "jvm-reader"
 version.workspace = true
-edition = "2021"
+edition = "2024"
+
+[lints]
+workspace = true
 
 [dependencies]
-zip = ">=2.2"
+rayon = "1.10"
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }

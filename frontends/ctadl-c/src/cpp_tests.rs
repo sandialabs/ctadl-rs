@@ -316,12 +316,15 @@ fn cpp_field_write_flows() {
             return v.f1;
         }";
     let (s, _si) = get_summary(program_from_cpp_string(src).0).unwrap();
+    // direct + deep-path field writes; each `->` steps through `deref`
     check_flow(&s, 2, "", 0, ".f2");
-    check_flow(&s, 1, ".f2.f3.f4", 0, ".f2.nf1.y");
-    check_flow(&s, 1, ".fa", 0, ".f5");
-    check_flow(&s, 1, ".fb", 0, ".f5");
-    check_flow(&s, 2, "", 0, ".f3");
-    check_flow(&s, 3, "", 0, ".f3");
+    check_flow(&s, 1, ".deref.f2.f3.deref.f4", 0, ".f2.nf1.y");
+    // arithmetic feeding a field supplies values only (temp-free)
+    check_flow(&s, 1, ".deref.fa", 0, ".f5.#value");
+    check_flow(&s, 1, ".deref.fb", 0, ".f5.#value");
+    check_no_flow(&s, 1, ".deref.fa", 0, ".f5");
+    check_flow(&s, 2, "", 0, ".f3.#value");
+    check_flow(&s, 3, "", 0, ".f3.#value");
     check_flow(&s, 1, ".xyz", 0, ".f1");
     check_returns_param(&s, 0, ".f1");
     check_returns_param(&s, 1, ".xyz");
@@ -453,20 +456,20 @@ fn cpp_ref_param_is_byref_write_back() {
         "set_ref",
         &[ParameterType::Shared, ParameterType::SharedFields],
     );
-    let callee = format!("{}", function_named(&prog, "set_ref").unwrap());
+    let callee = render_function(&prog, "set_ref");
     assert!(
         callee.contains("store @p0.deref := @p1") && !callee.contains("assign @p0"),
         "{prog}"
     );
     // The caller passes `x` through a temp's cell and copies it back after the call.
-    let main = format!("{}", function_named(&prog, "main").unwrap());
+    let main = render_function(&prog, "main");
     let lines: Vec<&str> = main.lines().map(str::trim).collect();
     let call = lines
         .iter()
         .position(|l| l.contains("direct-call set_ref("))
         .expect("the call");
     assert!(lines[call - 1].starts_with("store %") && lines[call - 1].ends_with(".deref := %L0"));
-    assert!(lines[call + 1].contains("= load %") && lines[call + 1].ends_with(".deref"));
+    assert!(lines[call + 1].starts_with("assign %") && lines[call + 1].ends_with(".deref"));
     assert!(lines[call + 2].starts_with("assign %L0 = "), "{main}");
 }
 
@@ -489,7 +492,7 @@ fn cpp_reference_cell_params_are_scalar_and_pointer_references() {
         }
     ";
     let prog = program_from_cpp_string(src).0;
-    let body = |name: &str| format!("{}", function_named(&prog, name).unwrap());
+    let body = |name: &str| render_function(&prog, name);
     let cells = body("cells");
     for p in ["@p0", "@p1", "@p2"] {
         assert!(
@@ -507,7 +510,7 @@ fn cpp_reference_cell_params_are_scalar_and_pointer_references() {
         .raw
         .iter()
         .find(|fun| fun.name.starts_with("lambda@"))
-        .map(|fun| format!("{fun}"))
+        .map(|fun| format!("{}", ctadl_ir::cir::WithGlobalNames(&prog, fun)))
         .unwrap_or_default();
     assert!(!lambda.contains(".deref"), "{lambda}");
 }
@@ -524,20 +527,15 @@ fn cpp_reference_cell_args_copy_back_into_their_location() {
         void fields(B& b, int v) { set(b.v, v); set(b.a[1], v); }
     ";
     let prog = program_from_cpp_string(src).0;
-    let outer = format!("{}", function_named(&prog, "outer").unwrap());
+    let outer = render_function(&prog, "outer");
     assert!(
-        outer.contains("load @p0.deref") && outer.contains("store @p0.deref := "),
+        outer.contains(" = @p0.deref") && outer.contains("store @p0.deref := "),
         "{outer}"
     );
-    let fields = format!("{}", function_named(&prog, "fields").unwrap());
+    let fields = render_function(&prog, "fields");
     assert!(fields.contains("store @p0.v := "), "{fields}");
-    // The element is read through the loaded array member, and written back the same way.
-    assert!(
-        fields
-            .lines()
-            .any(|l| l.trim().starts_with("store %") && l.contains(".[1].deref := ")),
-        "{fields}"
-    );
+    // The element is read and written back at its full path.
+    assert!(fields.contains("store @p0.a.[1].deref := "), "{fields}");
 }
 
 #[test_log::test]
@@ -2178,7 +2176,7 @@ fn cpp_delete_destructor_less_class_emits_no_call() {
 fn cpp_static_data_member_is_class_scoped_global() {
     // A `static` data member is a single class-scoped GLOBAL, not a per-object field: an
     // unqualified reference inside the class's methods binds to the global `Counter::total`
-    // (`$globals.Counter::total`), so a write through one static method is read by another.
+    // (`$Counter::total`, its storage at `.deref`), so a write through one static method is read by another.
     let src = r#"
         extern "C" int source();
         extern "C" void sink(int);
@@ -2196,8 +2194,8 @@ fn cpp_static_data_member_is_class_scoped_global() {
     "#;
     let prog = program_from_cpp_string(src).0;
     // The static member write/read both bind to the class-scoped global, not `this.total`.
-    check_func_assign_or_update(&prog, "Counter::add", "$globals.Counter::total", ["@p0"]);
-    check_func_loads(&prog, "Counter::get", "$globals.Counter::total");
+    check_func_assign_or_update(&prog, "Counter::add", "$Counter::total.deref", ["@p0"]);
+    check_func_loads(&prog, "Counter::get", "$Counter::total.deref");
     // Both static methods are invoked as receiver-less qualified calls.
     check_has_direct_call(&prog, "main", "Counter::add");
     check_has_direct_call(&prog, "main", "Counter::get");
@@ -2255,10 +2253,10 @@ fn cpp_static_member_shared_across_instance_and_static_method() {
         "Counter::bump",
         &[ParameterType::Shared, ParameterType::SharedFields],
     );
-    check_func_assign_or_update(&prog, "Counter::bump", "$globals.Counter::total", ["@p1"]);
+    check_func_assign_or_update(&prog, "Counter::bump", "$Counter::total.deref", ["@p1"]);
     // The static getter has no `this` and reads the same global.
     check_func_params(&prog, "Counter::get", &[]);
-    check_func_loads(&prog, "Counter::get", "$globals.Counter::total");
+    check_func_loads(&prog, "Counter::get", "$Counter::total.deref");
 }
 
 #[test_log::test]
@@ -2286,8 +2284,8 @@ fn cpp_distinct_static_members_are_distinct_globals() {
     // The setter writes the global `Counter::a`; the getter returns the *distinct* global
     // `Counter::b`. Two distinct global keys ⇒ no `a`→`b` flow (the end-to-end negative in
     // `taint_compare::tests::cpp_static_distinct_member_no_flow` confirms the absent flow).
-    check_func_assign_or_update(&prog, "Counter::seta", "$globals.Counter::a", ["@p0"]);
-    check_func_loads(&prog, "Counter::getb", "$globals.Counter::b");
+    check_func_assign_or_update(&prog, "Counter::seta", "$Counter::a.deref", ["@p0"]);
+    check_func_loads(&prog, "Counter::getb", "$Counter::b.deref");
 }
 
 // ---- Spec 017: scope-exit / RAII destructors -------------------------------
@@ -3300,7 +3298,7 @@ fn cpp_byvalue_class_argument_is_copy_constructed() {
         .and_then(|(_, args)| args.first().cloned())
         .unwrap_or_else(|| panic!("no call to `take` in `main`\n{prog}"));
     let locals = &function_named(&prog, "main").expect("main").locals;
-    let a = exp_from_str("a", locals);
+    let a = exp_from_str("a", locals, &prog.globals);
     assert_ne!(
         take_arg0, a,
         "a by-value class parameter must receive the copy, not the source object\n{prog}"
@@ -3470,7 +3468,7 @@ fn cpp_assignment_to_object_dispatches_to_operator() {
     // The operator call *replaces* the store: nothing in `main` writes `a` any more — the object
     // is only ever written by the callee, through the by-ref `@p0`.
     let a = local_render(&prog, "main", "a");
-    let dump = format!("{prog}");
+    let dump = render_function(&prog, "main");
     assert!(
         !dump.contains(&format!("assign {a} =")) && !dump.contains(&format!("store {a}")),
         "`a = source()` must dispatch to the operator instead of storing into `a`\n{dump}"
@@ -3727,7 +3725,7 @@ fn cpp_same_arity_ctors_are_two_functions() {
         &[ParameterType::Shared, ParameterType::SharedFields],
     );
     check_func_assign_or_update(&prog, "Box::Box#1(int)", "@p0.v", ["@p1"]);
-    check_func_loads(&prog, "Box::Box#1(Box*)", "@p1.v");
+    check_func_loads(&prog, "Box::Box#1(Box*)", "@p1.deref.v");
     // The merged chimera is gone: nothing is lowered under the bare name or the arity-only key.
     assert!(
         function_named(&prog, "Box::Box").is_none()
@@ -3766,7 +3764,7 @@ fn cpp_same_arity_methods_and_free_functions_are_two_functions() {
     check_func_loads(&prog, "Box::set#1(Box&)", "@p1.v");
     check_func_params(&prog, "f#1(int)", &[ParameterType::SharedFields]);
     check_func_params(&prog, "f#1(Box*)", &[ParameterType::SharedFields]);
-    check_func_loads(&prog, "f#1(Box*)", "@p0.v");
+    check_func_loads(&prog, "f#1(Box*)", "@p0.deref.v");
 }
 
 #[test_log::test]
@@ -3783,7 +3781,7 @@ fn cpp_namespaced_same_arity_functions_are_two_functions() {
     let prog = program_from_cpp_string(src).0;
     check_func_params(&prog, "ns::f#1(int)", &[ParameterType::SharedFields]);
     check_func_params(&prog, "ns::f#1(Box*)", &[ParameterType::SharedFields]);
-    check_func_loads(&prog, "ns::f#1(Box*)", "@p0.v");
+    check_func_loads(&prog, "ns::f#1(Box*)", "@p0.deref.v");
 }
 
 #[test_log::test]
@@ -4721,7 +4719,7 @@ fn cpp_lambda_is_a_function_and_its_closure_a_pointer_to_it() {
         .find(|fun| fun.name.starts_with("lambda@"))
         .unwrap_or_else(|| panic!("no lambda function\n{prog}"));
     assert_eq!(lambda.params.len(), 1, "{prog}");
-    let text = format!("{}", function_named(&prog, "f").unwrap());
+    let text = render_function(&prog, "f");
     assert!(text.contains("funcptr-call"), "{prog}");
 }
 
@@ -4738,7 +4736,7 @@ fn cpp_lambda_captures_share_global_slots() {
             return y;
         }";
     let prog = program_from_cpp_string(src).0;
-    let f = format!("{}", function_named(&prog, "f").unwrap());
+    let f = render_function(&prog, "f");
     assert!(
         f.contains("<ref ") && f.contains(" y>"),
         "y lives in a ref slot\n{prog}"
@@ -4753,7 +4751,7 @@ fn cpp_lambda_captures_share_global_slots() {
         .raw
         .iter()
         .find(|fun| fun.name.starts_with("lambda@"))
-        .map(|fun| format!("{fun}"))
+        .map(|fun| format!("{}", ctadl_ir::cir::WithGlobalNames(&prog, fun)))
         .unwrap_or_default();
     assert!(
         lambda.contains("<ref ") && lambda.contains("<val "),
@@ -4771,7 +4769,7 @@ fn cpp_lambda_implicit_capture_excludes_its_own_names() {
             g();
         }";
     let prog = program_from_cpp_string(src).0;
-    let f = format!("{}", function_named(&prog, "f").unwrap());
+    let f = render_function(&prog, "f");
     assert!(!f.contains("<ref "), "the outer y is not captured\n{prog}");
 }
 
@@ -4973,13 +4971,13 @@ fn cpp_lambda_capturing_this_uses_the_object_slot() {
         .raw
         .iter()
         .find(|fun| fun.name.starts_with("lambda@"))
-        .map(|fun| format!("{fun}"))
+        .map(|fun| format!("{}", ctadl_ir::cir::WithGlobalNames(&prog, fun)))
         .unwrap_or_default();
     assert!(
         lambda.contains(" this>"),
         "members go through the slot\n{prog}"
     );
-    let run = format!("{}", function_named(&prog, "S::run").unwrap());
+    let run = render_function(&prog, "S::run");
     // Member by member: assigning `@p0` itself would rebind the parameter, which never reaches
     // the caller.
     assert!(
@@ -5020,12 +5018,12 @@ fn cpp_function_pointer_member_is_called_through() {
         struct Btn { int (*cb)(int); Btn(int (*f)(int)) : cb(f) {} int click(int x) { return cb(x); } };
         int f(int v) { Btn b(id); return b.click(v); }";
     let prog = program_from_cpp_string(src).0;
-    let click = format!("{}", function_named(&prog, "Btn::click").unwrap());
+    let click = render_function(&prog, "Btn::click");
     assert!(
-        click.contains("load @p0.cb") && click.contains("funcptr-call"),
+        click.contains(" = @p0.cb") && click.contains("funcptr-call"),
         "{prog}"
     );
-    let f = format!("{}", function_named(&prog, "f").unwrap());
+    let f = render_function(&prog, "f");
     assert!(f.contains("ptr<id>"), "{prog}");
 }
 
@@ -5168,22 +5166,22 @@ fn cpp_structured_binding_in_range_for() {
         struct P { int a; int b; };
         void f(P* arr, int x) { for (auto& [k, v] : arr) v = x; }";
     let prog = program_from_cpp_string(src).0;
-    let text = format!("{}", function_named(&prog, "f").unwrap());
+    let text = render_function(&prog, "f");
     assert!(text.contains(".b := @p1"), "{prog}");
 }
 
 /// The lines of `main` in `src`, trimmed.
 fn main_lines(src: &str) -> Vec<String> {
     let prog = program_from_cpp_string(src).0;
-    format!("{}", function_named(&prog, "main").unwrap())
+    render_function(&prog, "main")
         .lines()
         .map(|l| l.trim().to_string())
         .collect()
 }
 
 /// A constructor's reference-cell parameter is copied back into the caller's argument, as at any
-/// other call (spec 047): `store <t>.deref := x` before the construction, then `x := load
-/// <t>.deref` after it. `x` is `main`'s first local, `%L0`.
+/// other call (spec 047): `store <t>.deref := x` before the construction, then `x := <t>.deref`
+/// after it. `x` is `main`'s first local, `%L0`.
 #[test]
 fn cpp_ctor_reference_arg_copies_back() {
     for src in [
@@ -5211,7 +5209,10 @@ fn cpp_ctor_reference_arg_copies_back() {
             .unwrap_or_else(|| panic!("no copy in: {lines:#?}"));
         let value = lines[call + 1..]
             .iter()
-            .find_map(|l| l.strip_suffix(&format!(" = load {cell}.deref")))
+            .find_map(|l| {
+                l.strip_prefix("assign ")
+                    .and_then(|r| r.strip_suffix(&format!(" = {cell}.deref")))
+            })
             .unwrap_or_else(|| panic!("no copy out of {cell}: {lines:#?}"));
         assert!(
             lines.contains(&format!("assign %L0 = {value}")),
@@ -5263,7 +5264,11 @@ fn cpp_mvp_element_arg_reads_the_element() {
             lines[..call]
                 .iter()
                 .rev()
-                .find_map(|l| l.split_once(" = load ").map(|(_, p)| p.to_string()))
+                .find_map(|l| {
+                    l.strip_prefix("assign ")
+                        .and_then(|r| r.split_once(" = "))
+                        .map(|(_, p)| p.to_string())
+                })
                 .unwrap_or_else(|| panic!("the argument is not loaded: {lines:#?}"))
         };
         let mvp = arg_load(&format!("B b({element})"));
@@ -5310,7 +5315,7 @@ fn cpp_reference_result_places_are_discovered() {
         ("pick(x)", "assign %L0 = <const: \"1\">"),
         ("second(x, y)", "assign %L1 = <const: \"1\">"),
         ("fld(q)", "store %L2.v := <const: \"1\">"),
-        ("gref()", "store $globals.g := <const: \"1\">"),
+        ("gref()", "store $g.deref := <const: \"1\">"),
         ("outer(x)", "assign %L0 = <const: \"1\">"),
         ("pick(pick(x))", "assign %L0 = <const: \"1\">"),
     ] {
@@ -5386,7 +5391,10 @@ fn cpp_reference_result_argument_copies_back() {
         .unwrap();
     let value = lines[set + 1..]
         .iter()
-        .find_map(|l| l.strip_suffix(&format!(" = load {cell}.deref")))
+        .find_map(|l| {
+            l.strip_prefix("assign ")
+                .and_then(|r| r.strip_suffix(&format!(" = {cell}.deref")))
+        })
         .unwrap_or_else(|| panic!("no copy out of {cell}: {lines:#?}"));
     assert!(
         lines[set + 1..].contains(&format!("assign %L0 = {value}")),
@@ -5419,14 +5427,14 @@ fn cpp_reference_param_is_not_a_returned_member() {
 }
 
 /// The location `main` last writes the constant `1` to, whose body is `body` after `defs`, with
-/// every temp base resolved to the load that defines it (`%L3.v` with `%L3 = load %L0.q` is
+/// every temp base resolved to the load that defines it (`%L3.v` with `assign %L3 = %L0.q` is
 /// `%L0.q.v`), so two lowerings that number their temps differently compare equal.
 fn last_write_of_one(defs: &str, body: &str) -> String {
     fn resolve(lines: &[String], path: &str) -> String {
         let (base, rest) = path.split_once('.').unwrap_or((path, ""));
         match lines
             .iter()
-            .find_map(|l| l.strip_prefix(&format!("{base} = load ")))
+            .find_map(|l| l.strip_prefix(&format!("assign {base} = ")))
         {
             Some(source) if rest.is_empty() => resolve(lines, source),
             Some(source) => format!("{}.{rest}", resolve(lines, source)),
@@ -5535,7 +5543,8 @@ fn cpp_weak_copy_back_into_several_locations() {
     for x in ["%L0", "%L1"] {
         assert!(
             after.windows(2).any(|w| {
-                w[0].strip_suffix(&format!(" = load {cell}.deref"))
+                w[0].strip_prefix("assign ")
+                    .and_then(|r| r.strip_suffix(&format!(" = {cell}.deref")))
                     .is_some_and(|v| w[1] == format!("assign {x} = {v}, {x}"))
             }),
             "no weak copy into {x}: {lines:#?}"

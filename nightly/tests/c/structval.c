@@ -22,7 +22,7 @@
  * SUBPIECE(w, offset), and because handle_binop ignores the offset, both
  * SUBPIECE results inherit the whole varnode's taint. structout.c is the
  * field-precise control: it reaches the fields through a pointer, so they stay
- * distinct .[off].deref access paths (LOAD/STORE keep the offset, PIECE/SUBPIECE
+ * distinct .[off].deref paths (LOAD/STORE keep the offset, PIECE/SUBPIECE
  * do not) and w.b stays clean. Adding padding so a and b sit in different
  * eightbytes also clears it, since the first-word PIECE no longer mixes them. If
  * SUBPIECE/PIECE ever become offset-aware, this test still passes and the sink

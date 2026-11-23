@@ -7,9 +7,10 @@ use crate::facts::{
     InsnSiteId, IntentKind, Path, Str,
 };
 use crate::index_engine::{IndexFacts, source_info::IndexSourceInfo};
-use crate::languages::android_manifest::AndroidManifest;
+use crate::languages::android_manifest;
 use crate::project::AnalysisProject;
-use ctadl_ir::{ProgramInfo, call::VirtualMethodTable};
+use ctadl_ir::{ProgramInfo, call::Dispatch};
+use dex_reader::axml::AndroidManifest;
 
 const INTENT: &str = "Landroid/content/Intent;";
 const BUNDLE: &str = "Landroid/os/Bundle;";
@@ -31,7 +32,7 @@ pub struct AndroidIntentObserver {
 
 impl AndroidIntentObserver {
     pub fn observe_import(&mut self, program_info: &ProgramInfo) {
-        if let VirtualMethodTable::Java { hierarchy, .. } = &program_info.vmt {
+        if let Dispatch::Java { hierarchy, .. } = &program_info.vmt.dispatch {
             for (subclass, parents) in hierarchy {
                 self.parents
                     .entry(subclass.0.to_string())
@@ -88,7 +89,11 @@ fn emit_api_summaries(facts: &mut IndexFacts, ids: &IdMap) -> AndroidIntentStats
             .into_iter()
             .map(|(func_id, var)| (func_id, var, FormalType::Shared)),
     );
-    facts.summary.extend(summaries);
+    facts.summary.extend(
+        summaries
+            .into_iter()
+            .map(|(f, dst, dp, src, sp)| (f, dst.into(), dp, src.into(), sp)),
+    );
 
     AndroidIntentStats {
         api_functions: api_functions.len(),
@@ -164,7 +169,7 @@ fn emit_send_sites(
         };
         for (formal, dst_path) in ports {
             let dst = call_arg_var(bridge.insn_id, FormalIndex::new(*formal));
-            assigns.insert((bridge_site, FlowVertex(dst, *dst_path), intent));
+            assigns.insert((bridge_site, FlowVertex::new(dst, *dst_path), intent));
         }
     }
     stats.intent_frames += frames.len();
@@ -190,7 +195,7 @@ fn load_manifest_receivers(
         if !manifest_path.is_file() {
             continue;
         }
-        let manifest = AndroidManifest::load(import.import_path())?;
+        let manifest = android_manifest::load_manifest(import.import_path())?;
         for component in manifest.components() {
             let Some(descriptor) = component.descriptor.as_deref() else {
                 continue;
@@ -474,14 +479,14 @@ fn emit_extras_assigns(facts: &mut IndexFacts, stats: &mut AndroidIntentStats) {
         if !field_path.is_empty() {
             paths.insert((field_path,));
         }
-        let rooted = FlowVertex(recv.0, recv.1.concat(&field_path));
+        let rooted = FlowVertex::new(recv.0, recv.1.concat(&field_path));
         let row = match op.kind {
             ExtrasKind::Put => (*site, rooted, value),
             ExtrasKind::Get => (*site, value, rooted),
         };
         assigns.insert(row);
         if matches!(op.kind, ExtrasKind::Get) && matches!(op.owner, ExtrasOwner::Intent) {
-            let lumped = FlowVertex(
+            let lumped = FlowVertex::new(
                 recv.0,
                 recv.1.concat(&Path::from_symbol_names(["<extras>"])),
             );
@@ -492,7 +497,7 @@ fn emit_extras_assigns(facts: &mut IndexFacts, stats: &mut AndroidIntentStats) {
             && matches!(op.owner, ExtrasOwner::Intent)
             && key.is_some()
         {
-            let lumped = FlowVertex(
+            let lumped = FlowVertex::new(
                 recv.0,
                 recv.1.concat(&Path::from_symbol_names(["<extras>"])),
             );
@@ -506,7 +511,7 @@ fn emit_extras_assigns(facts: &mut IndexFacts, stats: &mut AndroidIntentStats) {
 }
 
 fn call_arg_vertex(insn_id: InsnId, formal: FormalIndex) -> FlowVertex {
-    FlowVertex(call_arg_var(insn_id, formal), Path::empty())
+    FlowVertex::new(call_arg_var(insn_id, formal), Path::empty())
 }
 
 fn call_arg_var(insn_id: InsnId, formal: FormalIndex) -> FlowVariable {
@@ -737,9 +742,9 @@ mod tests {
                 .iter()
                 .any(|(func, dst, dst_path, src, src_path)| {
                     *func == set_action
-                        && **dst == 0
+                        && dst.as_formal().map(|i| *i) == Some(0)
                         && *dst_path == Path::from_symbol_names(["<action>"])
-                        && **src == 1
+                        && src.as_formal().map(|i| *i) == Some(1)
                         && src_path.is_empty()
                 })
         );
@@ -765,8 +770,16 @@ mod tests {
                 Str::from("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"),
             )],
             actual_param: vec![
-                (site, FormalIndex::new(0), FlowVertex(recv, Path::empty())),
-                (site, FormalIndex::new(2), FlowVertex(value, Path::empty())),
+                (
+                    site,
+                    FormalIndex::new(0),
+                    FlowVertex::new(recv, Path::empty()),
+                ),
+                (
+                    site,
+                    FormalIndex::new(2),
+                    FlowVertex::new(value, Path::empty()),
+                ),
             ],
             const_str_assign: vec![(site, key_arg, Str::from("secret"))],
             ..Default::default()
@@ -777,8 +790,8 @@ mod tests {
         assert_eq!(stats.keyed_extra_sites, 1);
         assert!(facts.assign.iter().any(|(assign_site, dst, src)| {
             *assign_site == site
-                && *dst == FlowVertex(recv, Path::from_symbol_names(["<extras>", "secret"]))
-                && *src == FlowVertex(value, Path::empty())
+                && *dst == FlowVertex::new(recv, Path::from_symbol_names(["<extras>", "secret"]))
+                && *src == FlowVertex::new(value, Path::empty())
         }));
     }
 
@@ -802,8 +815,16 @@ mod tests {
                 Str::from("(Ljava/lang/String;Ljava/lang/String;)V"),
             )],
             actual_param: vec![
-                (site, FormalIndex::new(0), FlowVertex(bundle, Path::empty())),
-                (site, FormalIndex::new(2), FlowVertex(value, Path::empty())),
+                (
+                    site,
+                    FormalIndex::new(0),
+                    FlowVertex::new(bundle, Path::empty()),
+                ),
+                (
+                    site,
+                    FormalIndex::new(2),
+                    FlowVertex::new(value, Path::empty()),
+                ),
             ],
             const_str_assign: vec![(site, key_arg, Str::from("secret"))],
             ..Default::default()
@@ -814,8 +835,8 @@ mod tests {
         assert_eq!(stats.keyed_extra_sites, 1);
         assert!(facts.assign.iter().any(|(assign_site, dst, src)| {
             *assign_site == site
-                && *dst == FlowVertex(bundle, Path::from_symbol_names(["secret"]))
-                && *src == FlowVertex(value, Path::empty())
+                && *dst == FlowVertex::new(bundle, Path::from_symbol_names(["secret"]))
+                && *src == FlowVertex::new(value, Path::empty())
         }));
         assert!(
             !facts
@@ -838,7 +859,11 @@ mod tests {
                 Str::from("startActivity"),
                 Str::from("(Landroid/content/Intent;)V"),
             )],
-            actual_param: vec![(site, FormalIndex::new(1), FlowVertex(intent, Path::empty()))],
+            actual_param: vec![(
+                site,
+                FormalIndex::new(1),
+                FlowVertex::new(intent, Path::empty()),
+            )],
             ..Default::default()
         };
         let mut source_info = IndexSourceInfo::default();
@@ -891,7 +916,11 @@ mod tests {
                     Str::from(name),
                     Str::from(descriptor),
                 )],
-                actual_param: vec![(site, FormalIndex::new(1), FlowVertex(intent, Path::empty()))],
+                actual_param: vec![(
+                    site,
+                    FormalIndex::new(1),
+                    FlowVertex::new(intent, Path::empty()),
+                )],
                 ..Default::default()
             };
             let mut source_info = IndexSourceInfo::default();
@@ -992,7 +1021,7 @@ mod tests {
 
     #[test]
     fn activity_filters_require_default_category() {
-        let manifest = crate::languages::android_manifest::parse_manifest(
+        let manifest = dex_reader::axml::parse_manifest(
             br#"<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">
                 <application>
                     <activity android:name=".MainActivity">

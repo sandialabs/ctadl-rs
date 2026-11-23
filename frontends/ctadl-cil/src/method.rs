@@ -41,19 +41,21 @@
 //! such point adds its `throwval` into `excout` (`excout := excout, throwval`), defined empty
 //! at entry, and the value reaches the caller through whichever return the method takes.
 //! Ending a block after every call instead would give each its own edge out, but would cut
-//! the load chains the index composes field paths along, which it does within a block only.
+//! the load chains the index composes paths along, which it does within a block only.
 
 use cil_reader::flow::{
     BlockId, BoundIns, Control, Effect, FlowOptions, HandlerKind, InsId, MethodFlow, Var,
 };
 use cil_reader::model::{MethodBody, MethodDef, MethodSig, TypeSig};
 use cil_reader::token::TokenType;
-use ctadl_ir::mir::{FieldRef, LocalIdx};
+use ctadl_ir::cir::{Globals, LocalIdx, PathSegment};
+use ctadl_ir::index::index_vec_deque::IndexVecDeque;
 use ctadl_ir::*;
+use hashbrown::HashMap;
 use smallvec::{SmallVec, smallvec};
-use source_info::SourceInfoBuilder;
 
 use crate::Collected;
+use crate::calls::Resolved;
 use crate::lines::MethodSpans;
 use crate::names::{ModNames, Namer};
 use crate::ptr::{Addresses, VarInfo};
@@ -71,6 +73,16 @@ pub struct Emitter<'f> {
     pub block: BasicBlockIdx,
     pub source_info: SourceInfo,
     fresh: u32,
+    /// The statements of `block` so far, moved into it by [`Self::end_block`] in a deque of
+    /// their exact number: growing the block's deque one statement at a time reallocates it
+    /// over and over, and leaves it up to twice the size it needs.
+    stmts: Vec<Statement>,
+    /// The local each flow-layer variable named so far is, so that naming it again builds no
+    /// name.
+    vars: HashMap<Var, LocalIdx>,
+    /// The globals, where a static field's class is declared. `None` for a body
+    /// that names no static field.
+    globals: Option<&'f mut Globals>,
 }
 
 impl<'f> Emitter<'f> {
@@ -80,12 +92,35 @@ impl<'f> Emitter<'f> {
             block: BasicBlockIdx::new(0),
             source_info: SourceInfo::default(),
             fresh: 0,
+            stmts: Vec::new(),
+            vars: HashMap::new(),
+            globals: None,
         }
+    }
+
+    /// An emitter that can declare globals in `globals`.
+    pub fn with_globals(fdat: &'f mut FunctionData, globals: &'f mut Globals) -> Self {
+        Emitter {
+            globals: Some(globals),
+            ..Self::new(fdat)
+        }
+    }
+
+    /// The global `name`, declared if it is not yet.
+    pub fn global(&mut self, name: &str) -> VariableRef {
+        let globals = self
+            .globals
+            .as_deref_mut()
+            .expect("an emitter that names a global has globals");
+        VariableRef::global(globals.declare(name, None))
     }
 
     /// The `VariableRef` for a flow-layer variable.
     pub fn var(&mut self, v: Var) -> VariableRef {
-        match v {
+        if let Some(&idx) = self.vars.get(&v) {
+            return VariableRef::new_local_idx(idx);
+        }
+        let var = match v {
             // Code that names an argument past its signature does not verify; a local of
             // its own keeps the IR well formed.
             Var::Arg(n) if n as usize >= self.fdat.params.parameters.len() => {
@@ -97,11 +132,15 @@ impl<'f> Emitter<'f> {
             Var::Temp(k) => self.local(&format!("t{k}")),
             Var::Caught(h) => self.local(&format!("caught{h}")),
             Var::Thrown => self.throwval(),
+        };
+        if let Variable::Local(idx) = var.variable {
+            self.vars.insert(v, idx);
         }
+        var
     }
 
     pub fn exp(&mut self, v: Var) -> Exp {
-        Exp::Variable(self.var(v))
+        Exp::variable(self.var(v))
     }
 
     pub fn local(&mut self, name: &str) -> VariableRef {
@@ -130,28 +169,34 @@ impl<'f> Emitter<'f> {
     }
 
     pub fn push(&mut self, kind: StatementKind) {
-        let stmt = Statement::new(kind, self.source_info);
-        self.fdat.blocks[self.block].push_back(stmt);
+        self.stmts.push(Statement::new(kind, self.source_info));
+    }
+
+    /// Ends `block`: gives it the statements pushed since the last block ended, and `term`.
+    pub fn end_block(&mut self, term: TerminatorKind) {
+        let block = &mut self.fdat.blocks[self.block];
+        let mut statements =
+            IndexVecDeque::with_capacity(block.statements.len() + self.stmts.len());
+        for s in std::mem::take(&mut block.statements).into_iter_inner() {
+            statements.push_back(s);
+        }
+        for s in self.stmts.drain(..) {
+            statements.push_back(s);
+        }
+        block.statements = statements;
+        block.terminator = Some(Terminator::new_kind(term));
     }
 
     pub fn assign(&mut self, dst: VariableRef, srcs: impl IntoIterator<Item = Exp>) {
         self.push(StatementKind::assign(dst, srcs));
     }
 
-    pub fn load(&mut self, dst: VariableRef, base: VariableRef, field: FieldRef) {
-        self.push(StatementKind::load(
-            dst,
-            AccessPath::without_fields(base),
-            field,
-        ));
+    pub fn load(&mut self, dst: VariableRef, base: VariableRef, field: PathSegment) {
+        self.push(StatementKind::load(dst, AccessPath::from(base), field));
     }
 
-    pub fn store(&mut self, base: VariableRef, field: FieldRef, value: Exp) {
-        self.push(StatementKind::store(
-            AccessPath::without_fields(base),
-            field,
-            value,
-        ));
+    pub fn store(&mut self, base: VariableRef, field: PathSegment, value: Exp) {
+        self.push(StatementKind::store(AccessPath::from(base), field, value));
     }
 }
 
@@ -240,6 +285,8 @@ pub struct Lower<'x, 'n, 'm, 'c, 'l> {
     /// Whether `Local(n)` holds an address: a `ref` local.
     pub ptr_locals: Vec<bool>,
     pub out: &'x mut Collected,
+    /// What the assembly's calls resolve to.
+    pub resolved: &'x Resolved,
     /// The value-type `New` of the current instruction, whose constructor gets an address.
     pub new_value: Option<Var>,
     /// Within the current block, which variables hold a function pointer to a static method,
@@ -251,7 +298,9 @@ pub struct Lower<'x, 'n, 'm, 'c, 'l> {
     pub cur: InsId,
 }
 
-/// Lowers one method with a body into `fdat`, whose shape is already set.
+/// Lowers one method with a body into `fdat`, whose shape is already set. Its spans are listed
+/// in `lines` and the globals it names declared in `globals`, both its own, so that methods can be
+/// lowered independently.
 #[allow(clippy::too_many_arguments)]
 pub fn lower_body<'n, 'm, 'c, 'l>(
     names: &ModNames<'n, 'm, 'c, 'l>,
@@ -259,8 +308,9 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
     body: &MethodBody<'m>,
     sig: &MethodSig,
     fdat: &mut FunctionData,
+    globals: &mut Globals,
     lines: &mut MethodSpans<'_, '_>,
-    spans: &mut SourceInfoBuilder,
+    resolved: &Resolved,
     out: &mut Collected,
 ) {
     let flow = MethodFlow::build_with(body, FLOW_OPTIONS);
@@ -299,6 +349,7 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
         ptr_args,
         ptr_locals,
         out,
+        resolved,
         new_value: None,
         static_fnptrs: Default::default(),
         addrs,
@@ -308,12 +359,12 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
     for _ in blocks {
         fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
     }
-    let mut em = Emitter::new(fdat);
+    let mut em = Emitter::with_globals(fdat, globals);
     for (b, block) in blocks.iter().enumerate() {
         em.block = BasicBlockIdx::new(b);
         lower.static_fnptrs.clear();
         if b == 0 {
-            em.source_info = lines.span(spans, block.start, 1);
+            em.source_info = lines.span(block.start, 1);
             let out = em.excout();
             em.assign(out, [empty()]);
         }
@@ -324,30 +375,41 @@ pub fn lower_body<'n, 'm, 'c, 'l>(
             if handler.entry == Some(b)
                 && matches!(handler.kind, HandlerKind::Catch | HandlerKind::Filter)
             {
-                em.source_info = lines.span(spans, block.start, 1);
+                em.source_info = lines.span(block.start, 1);
                 let caught = em.var(Var::Caught(h));
                 let thrown = em.throwval();
-                em.assign(caught, [Exp::Variable(thrown)]);
+                em.assign(caught, [Exp::variable(thrown)]);
             }
         }
         for (index, ins) in block.instrs.iter().enumerate() {
-            em.source_info = lines.span(spans, ins.flow.offset, ins.flow.size.max(1));
+            em.source_info = lines.span(ins.flow.offset, ins.flow.size.max(1));
             let at = InsId { block: b, index };
             lower.cross_check(at, ins);
             lower.instruction(&mut em, at, ins);
         }
         let term = lower.terminator(&mut em, b);
-        em.fdat.blocks[em.block].terminator = Some(Terminator::new_kind(term));
+        em.end_block(term);
     }
 }
 
 /// The body of a delegate thunk (`calls.rs`): call `target` with every parameter but the first,
 /// the ignored target, and return what it returns.
 pub fn thunk_body(fdat: &mut FunctionData, target: &str, target_arity: usize) {
+    forward_body(fdat, target, 1..=target_arity);
+}
+
+/// The body of an override bridge (`hierarchy.rs`): call `target` with every parameter, and
+/// return what it returns.
+pub fn bridge_body(fdat: &mut FunctionData, target: &str, arity: usize) {
+    forward_body(fdat, target, 0..arity);
+}
+
+/// A body that calls `target` with `params`, and returns what it returns.
+fn forward_body(fdat: &mut FunctionData, target: &str, params: impl Iterator<Item = usize>) {
     fdat.blocks.blocks_mut().push(BasicBlockData::new(None));
     let mut em = Emitter::new(fdat);
-    let args: ThinVec<Exp> = (1..=target_arity)
-        .map(|n| Exp::Variable(VariableRef::new_parameter(ParameterIdx::new(n))))
+    let args: ThinVec<Exp> = params
+        .map(|n| Exp::variable(VariableRef::new_parameter(ParameterIdx::new(n))))
         .collect();
     let retval = em.retval();
     let thrown = em.throwval();
@@ -358,9 +420,9 @@ pub fn thunk_body(fdat: &mut FunctionData, target: &str, target_arity: usize) {
         rets: thin_vec![retval.clone(), thrown.clone()],
         args,
     });
-    em.fdat.blocks[em.block].terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-        args: smallvec![Exp::Variable(retval), Exp::Variable(thrown)],
-    }));
+    em.end_block(TerminatorKind::Return {
+        args: smallvec![Exp::variable(retval), Exp::variable(thrown)],
+    });
 }
 
 fn empty() -> Exp {
@@ -381,7 +443,7 @@ impl Lower<'_, '_, '_, '_, '_> {
                 targets.push(t);
             }
         };
-        let out = Exp::Variable(em.excout());
+        let out = Exp::variable(em.excout());
         match control {
             Control::Return => {
                 let value = last
@@ -442,7 +504,7 @@ impl Lower<'_, '_, '_, '_, '_> {
             return;
         }
         let (out, thrown) = (em.excout(), em.throwval());
-        em.assign(out.clone(), [Exp::Variable(out), Exp::Variable(thrown)]);
+        em.assign(out.clone(), [Exp::variable(out), Exp::variable(thrown)]);
     }
 
     /// Whether every exception raised in block `b` is caught in this method: some handler it
@@ -480,7 +542,7 @@ impl Lower<'_, '_, '_, '_, '_> {
             };
         };
         let args: ThinVec<Exp> = (0..em.fdat.params.parameters.len())
-            .map(|n| Exp::Variable(VariableRef::new_parameter(ParameterIdx::new(n))))
+            .map(|n| Exp::variable(VariableRef::new_parameter(ParameterIdx::new(n))))
             .collect();
         let retval = em.retval();
         if let Some(key) = self.names.method_key(method.token) {
@@ -496,7 +558,7 @@ impl Lower<'_, '_, '_, '_, '_> {
             self.raise_out(em);
         }
         TerminatorKind::Return {
-            args: smallvec![Exp::Variable(retval), Exp::Variable(em.excout())],
+            args: smallvec![Exp::variable(retval), Exp::variable(em.excout())],
         }
     }
 }

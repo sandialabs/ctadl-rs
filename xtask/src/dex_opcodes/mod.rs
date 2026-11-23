@@ -28,13 +28,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
-use dex_reader::instructions::{Instruction, DALVIK_OPCODES};
-use dex_reader::parser::{decode_code_item, DecodedCodeItem};
+use anyhow::{Context, Result, anyhow, bail};
 use dex_reader::DexParser;
+use dex_reader::instructions::{DALVIK_OPCODES, Instruction};
+use dex_reader::parser::{DecodedCodeItem, decode_code_item};
 
 use crate::exec;
-use cases::{Case, Fault, In, Ty, CASE_REGS};
+use cases::{CASE_REGS, Case, Fault, In, Ty};
 
 const H_JAVA: &str = include_str!("H.java");
 const DRIVER_JAVA: &str = include_str!("Driver.java");
@@ -43,14 +43,34 @@ const DEVICE_DIR: &str = "/data/local/tmp/ctadl-dex-opcodes";
 /// REVIEW findings that are expected, by case name and finding, with the reason.
 const EXPECTED_REVIEWS: &[(&str, &str, &str)] = &[
     ("const-string", "can_throw() but never threw", RESOLUTION),
-    ("const-string/jumbo", "can_throw() but never threw", RESOLUTION),
+    (
+        "const-string/jumbo",
+        "can_throw() but never threw",
+        RESOLUTION,
+    ),
     ("const-class", "can_throw() but never threw", RESOLUTION),
-    ("const-method-handle", "can_throw() but never threw", RESOLUTION),
-    ("const-method-type", "can_throw() but never threw", RESOLUTION),
+    (
+        "const-method-handle",
+        "can_throw() but never threw",
+        RESOLUTION,
+    ),
+    (
+        "const-method-type",
+        "can_throw() but never threw",
+        RESOLUTION,
+    ),
     ("instance-of", "can_throw() but never threw", RESOLUTION),
     ("new-instance", "can_throw() but never threw", RESOLUTION),
-    ("filled-new-array", "can_throw() but never threw", RESOLUTION),
-    ("filled-new-array/range", "can_throw() but never threw", RESOLUTION),
+    (
+        "filled-new-array",
+        "can_throw() but never threw",
+        RESOLUTION,
+    ),
+    (
+        "filled-new-array/range",
+        "can_throw() but never threw",
+        RESOLUTION,
+    ),
     ("sget", "can_throw() but never threw", RESOLUTION),
     ("sput", "can_throw() but never threw", RESOLUTION),
     ("sget-wide", "can_throw() but never threw", RESOLUTION),
@@ -69,15 +89,51 @@ const EXPECTED_REVIEWS: &[(&str, &str, &str)] = &[
     ("sget-wide D", "can_throw() but never threw", RESOLUTION),
     ("sput F", "can_throw() but never threw", RESOLUTION),
     ("sput-wide D", "can_throw() but never threw", RESOLUTION),
-    ("monitor-exit", "can_throw() but never threw", "IllegalMonitorStateException needs an unheld lock; the `monitor-exit unlocked` case throws it."),
-    ("div-int/lit16", "can_throw() but never threw", "The divisor is a literal; the `div-int/lit16 by zero` case throws."),
-    ("rem-int/lit16", "can_throw() but never threw", "The divisor is a literal; the `rem-int/lit16 by zero` case throws."),
-    ("div-int/lit8", "can_throw() but never threw", "The divisor is a literal; the `div-int/lit8 by zero` case throws."),
-    ("rem-int/lit8", "can_throw() but never threw", "The divisor is a literal; the `rem-int/lit8 by zero` case throws."),
-    ("monitor-enter", "source v1 never changed the result", MONITOR),
-    ("monitor-exit", "source v1 never changed the result", MONITOR),
-    ("check-cast", "dest v1 never changed", "check-cast rewrites vA with the same reference, now known to have the cast type."),
-    ("long-to-int", "source v5 never changed the result", "Truncation drops the high word, but the instruction reads the pair: the verifier requires vB, vB+1 to hold a long."),
+    (
+        "monitor-exit",
+        "can_throw() but never threw",
+        "IllegalMonitorStateException needs an unheld lock; the `monitor-exit unlocked` case throws it.",
+    ),
+    (
+        "div-int/lit16",
+        "can_throw() but never threw",
+        "The divisor is a literal; the `div-int/lit16 by zero` case throws.",
+    ),
+    (
+        "rem-int/lit16",
+        "can_throw() but never threw",
+        "The divisor is a literal; the `rem-int/lit16 by zero` case throws.",
+    ),
+    (
+        "div-int/lit8",
+        "can_throw() but never threw",
+        "The divisor is a literal; the `div-int/lit8 by zero` case throws.",
+    ),
+    (
+        "rem-int/lit8",
+        "can_throw() but never threw",
+        "The divisor is a literal; the `rem-int/lit8 by zero` case throws.",
+    ),
+    (
+        "monitor-enter",
+        "source v1 never changed the result",
+        MONITOR,
+    ),
+    (
+        "monitor-exit",
+        "source v1 never changed the result",
+        MONITOR,
+    ),
+    (
+        "check-cast",
+        "dest v1 never changed",
+        "check-cast rewrites vA with the same reference, now known to have the cast type.",
+    ),
+    (
+        "long-to-int",
+        "source v5 never changed the result",
+        "Truncation drops the high word, but the instruction reads the pair: the verifier requires vB, vB+1 to hold a long.",
+    ),
 ];
 
 /// Why resolution-only throws are not provoked by inputs.

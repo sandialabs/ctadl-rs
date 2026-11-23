@@ -32,21 +32,25 @@ outcome as importing an APK on a machine that has no Ghidra, which is common and
 
 #[cfg(feature = "apk")]
 pub mod apk_native;
+#[cfg(feature = "apk")]
+pub mod budget;
 #[cfg(feature = "flowy")]
 pub mod flowy;
 #[cfg(feature = "xapk")]
 pub mod xapk;
 
 use ctadl_import::error::{Error, ErrorContext};
+use ctadl_import::notifications::{NOTIFICATIONS_FILE, Notifications};
 use ctadl_import::project::{ArtifactImport, ArtifactLanguage};
 use ctadl_ir::{ProgramInfo, ssa};
 
 /// Settings for one import, beyond the artifact itself and its language.
 ///
-/// Every field here but the last matters only for an APK, the one artifact that imports other
-/// artifacts out of itself: its native libraries. See [`apk_native`]. The last is the CIL
-/// front end's assembly selection. [`Default`] gives the simple behavior, which is to import
-/// everything an APK holds, reuse nothing, and leave the .NET framework out.
+/// The first three fields matter only for an APK, the one artifact that imports other
+/// artifacts out of itself: its native libraries. See [`apk_native`]. Then come the CIL front
+/// end's assembly selection and Ghidra's thread count. [`Default`] gives the simple behavior,
+/// which is to import everything an APK holds, reuse nothing, leave the .NET framework out,
+/// and let Ghidra use every core.
 #[derive(Debug, Clone, Copy)]
 pub struct ImportOptions<'a> {
     /// Reuse a sub-import that was already done, when the artifact hash stored with it still
@@ -61,6 +65,12 @@ pub struct ImportOptions<'a> {
     /// Import a .NET directory's framework assemblies too, rather than only reading their
     /// metadata. Off by default.
     pub cil_include_framework: bool,
+    /// How many cores an import may use. For a single native artifact, this is how many
+    /// threads Ghidra may use. For an APK's native libraries or a bundle's splits, which are
+    /// imported several at once, it is the core budget they share (see [`budget`]). `0`, the
+    /// default, leaves a single Ghidra run every core the OS reports, and sets the shared
+    /// budget to [`budget::DEFAULT_MAX_CORES`] or the cores the OS reports, whichever is fewer.
+    pub jobs: usize,
 }
 
 impl Default for ImportOptions<'_> {
@@ -70,6 +80,7 @@ impl Default for ImportOptions<'_> {
             native_libs: true,
             native_abi: None,
             cil_include_framework: false,
+            jobs: 0,
         }
     }
 }
@@ -92,14 +103,40 @@ fn unsupported(language: ArtifactLanguage, feature: &str) -> Error {
     }
 }
 
-/// Imports one artifact into a [`ProgramInfo`], picking the front end from its language.
+/// What a front end built out of one artifact.
+#[derive(Debug, Default)]
+pub struct Imported {
+    pub program_info: ProgramInfo,
+    /// What the import has to say about the program; see [`ctadl_import::notifications`].
+    pub notifications: Notifications,
+}
+
+/// Imports one artifact into a [`ProgramInfo`] and its notifications, picking the front end from
+/// its language.
 ///
 /// This writes to the store only when an artifact produces other imports, such as an APK's
 /// native libraries or a bundle's split APKs. Those have to be finished before this function
-/// returns. Saving the returned program is up to the caller. See
-/// [`ctadl_import::save_program_info`], or [`open_or_import`] for the whole round trip.
-// Only the container-format arms read `opts`, and the log line at the end cannot be reached in
-// a build with no language enabled at all. Both depend on the feature set, not on the code.
+/// returns. Saving the result is up to the caller. See [`import_and_save`], or
+/// [`open_or_import`] for the whole round trip.
+pub fn import_artifact(
+    import: &ArtifactImport,
+    opts: ImportOptions<'_>,
+) -> Result<Imported, Error> {
+    import_artifact_in(import, opts, None)
+}
+
+/// The budget a container's sub-imports run under when the container is itself one of several
+/// imports sharing one; `None` gives the container a budget of its own. See [`budget`].
+#[cfg(feature = "apk")]
+type BudgetRef<'a> = Option<&'a budget::Budget>;
+/// Without the `apk` feature no container is compiled in, and there is nothing to share.
+#[cfg(not(feature = "apk"))]
+type BudgetRef<'a> = Option<&'a std::convert::Infallible>;
+
+/// [`import_artifact`], with the budget a container's sub-imports run under.
+// Only the container-format arms read `opts` and `budget`, and the log line at the end cannot be
+// reached in a build with no language enabled at all. Both depend on the feature set, not on the
+// code.
 #[cfg_attr(not(feature = "apk"), allow(unused_variables))]
 #[cfg_attr(
     not(any(
@@ -115,10 +152,11 @@ fn unsupported(language: ArtifactLanguage, feature: &str) -> Error {
     )),
     allow(unreachable_code)
 )]
-pub fn import_artifact(
+fn import_artifact_in(
     import: &ArtifactImport,
     opts: ImportOptions<'_>,
-) -> Result<ProgramInfo, Error> {
+    budget: BudgetRef<'_>,
+) -> Result<Imported, Error> {
     use ArtifactLanguage::*;
     log::info!(
         "importing {} artifact '{}' from {}",
@@ -126,22 +164,32 @@ pub fn import_artifact(
         import.name,
         import.artifact_path.display()
     );
+    #[cfg_attr(not(feature = "dex"), allow(unused_mut))]
+    let mut notifications = Notifications::new();
     // The type is written out because in a build with no language enabled, every arm returns
     // early and there is nothing for the compiler to infer from.
     let program_info: ProgramInfo = match &import.language {
         #[cfg(feature = "dex")]
-        Dex => ctadl_dex::import_dex(&import.artifact_path)?,
+        Dex => {
+            let dex = ctadl_dex::import_dex(&import.artifact_path)?;
+            notifications.extend(dex.notifications, None);
+            dex.program_info
+        }
         #[cfg(not(feature = "dex"))]
         Dex => return Err(unsupported(Dex, "dex")),
 
         #[cfg(feature = "apk")]
-        Apk => import_apk(import, opts)?,
+        Apk => {
+            let apk = import_apk(import, opts, budget)?;
+            notifications.extend(apk.notifications, None);
+            apk.program_info
+        }
         #[cfg(not(feature = "apk"))]
         Apk => return Err(unsupported(Apk, "apk")),
 
         #[cfg(feature = "xapk")]
         Xapk => {
-            let sub_imports = xapk::import_bundle(import, opts)?;
+            let sub_imports = xapk::import_bundle_in(import, opts, budget)?;
             record_sub_imports(import, sub_imports)?;
             ProgramInfo::default()
         }
@@ -158,7 +206,7 @@ pub fn import_artifact(
         Jvm => return Err(unsupported(Jvm, "jvm")),
 
         #[cfg(feature = "pcode")]
-        Pcode => ctadl_pcode::import_pcode(import)?,
+        Pcode => ctadl_pcode::import_pcode(import, opts.jobs)?,
         #[cfg(not(feature = "pcode"))]
         Pcode => return Err(unsupported(Pcode, "pcode")),
 
@@ -193,19 +241,81 @@ pub fn import_artifact(
         import.name,
         program_info.program.functions.len()
     );
-    Ok(program_info)
+    Ok(Imported {
+        program_info,
+        notifications,
+    })
 }
 
-/// Imports an APK: first the Java half from `classes*.dex`, then the native half from
-/// `lib/<abi>/`.
+/// Imports an APK: the Java half from `classes*.dex` and the native half from `lib/<abi>/`.
+///
+/// The two halves are independent, and the native half is mostly time spent waiting on Ghidra,
+/// so when the APK has Dex they run at the same time, under one [`budget::Budget`] (the caller's,
+/// or one built from `opts.jobs`). Otherwise -- no Dex, or a file whose ZIP directory cannot even
+/// be listed -- the Dex half runs first, which is cheap then, and is what fails quickly on a file
+/// that is not really an APK, before any native library is extracted or handed to Ghidra.
 #[cfg(feature = "apk")]
-fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<ProgramInfo, Error> {
-    // Do the Dex half first. It is cheap, and it is what fails quickly on a file that is not
-    // really an APK, before any native library is extracted or handed to Ghidra.
+fn import_apk(
+    import: &ArtifactImport,
+    opts: ImportOptions<'_>,
+    budget: BudgetRef<'_>,
+) -> Result<Imported, Error> {
+    let own_budget;
+    let budget = match budget {
+        Some(budget) => budget,
+        None => {
+            own_budget = budget::Budget::from_jobs(opts.jobs);
+            &own_budget
+        }
+    };
+    let path = &import.artifact_path;
+    let dex_size = dex_reader::apk::dex_size_of_file(path).unwrap_or(0);
+    if dex_size > 0 {
+        // Asked for before the native half starts asking, so the Dex starts first.
+        let turn = budget.dex_turn();
+        let grant = budget.acquire(budget::Request {
+            cores: 1,
+            mib: dex_lowering_mib(dex_size),
+        });
+        // A Dex half that fails fails the import, so the native half starts no further library
+        // once it has.
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let (java, native) = std::thread::scope(|scope| {
+            let native = budget::spawn_scoped(scope, || {
+                apk_native::import_native_libs_in(import, opts, Some(budget), Some(&cancel))
+            });
+            let java = budget.install(|| ctadl_dex::import_apk(path));
+            if java.is_err() {
+                cancel.store(true, std::sync::atomic::Ordering::Release);
+            }
+            drop(grant);
+            drop(turn);
+            (java, native.join())
+        });
+        let ctadl_dex::ApkImport {
+            program_info,
+            notifications,
+            dex_count,
+        } = java?;
+        log::info!(
+            "{}: {} classes*.dex entr{}",
+            path.display(),
+            dex_count,
+            if dex_count == 1 { "y" } else { "ies" },
+        );
+        let native = native.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        record_sub_imports(import, native?)?;
+        return Ok(Imported {
+            program_info,
+            notifications,
+        });
+    }
+
     let ctadl_dex::ApkImport {
         program_info,
+        notifications,
         dex_count,
-    } = ctadl_dex::import_apk(&import.artifact_path)?;
+    } = budget.install(|| ctadl_dex::import_apk(path))?;
     if dex_count > 0 {
         log::info!(
             "{}: {} classes*.dex entr{}",
@@ -236,15 +346,56 @@ fn import_apk(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<Progra
             );
         }
     }
-    record_sub_imports(import, apk_native::import_native_libs(import, opts)?)?;
-    Ok(program_info)
+    record_sub_imports(
+        import,
+        apk_native::import_native_libs_in(import, opts, Some(budget), None)?,
+    )?;
+    Ok(Imported {
+        program_info,
+        notifications,
+    })
+}
+
+/// The memory, in MiB, lowering `dex_size` bytes of Dex takes in this process, for
+/// [`budget::Budget`]: about 56 bytes per byte of Dex, which is what large apps measure, plus a
+/// fixed part.
+#[cfg(feature = "apk")]
+fn dex_lowering_mib(dex_size: u64) -> u64 {
+    512 + dex_size.saturating_mul(56) / (1 << 20)
 }
 
 /// Runs [`import_artifact`] and then writes the result to the store. This is what `ctadl
 /// import` does for one artifact, and what a container format does for each artifact it
-/// unpacks.
+/// unpacks. The notifications go to the import's `notifications.sarif`; with none, the file is
+/// removed, so an earlier import's do not outlive it.
 pub fn import_and_save(import: &ArtifactImport, opts: ImportOptions<'_>) -> Result<(), Error> {
-    let program_info = import_artifact(import, opts)?;
+    import_and_save_in(import, opts, None)
+}
+
+/// [`import_and_save`] under a budget shared with other imports; see [`import_artifact_in`].
+fn import_and_save_in(
+    import: &ArtifactImport,
+    opts: ImportOptions<'_>,
+    budget: BudgetRef<'_>,
+) -> Result<(), Error> {
+    let Imported {
+        program_info,
+        notifications,
+    } = import_artifact_in(import, opts, budget)?;
+    let dir = import.import_path();
+    if notifications.is_empty() {
+        let path = dir.join(NOTIFICATIONS_FILE);
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(e).err_context(|| format!("removing {}", path.display()));
+            }
+            _ => {}
+        }
+    } else {
+        notifications
+            .save(&dir)
+            .err_context(|| format!("writing notifications to {}", dir.display()))?;
+    }
     log::debug!("encoding");
     ctadl_import::save_program_info(program_info, import)
 }

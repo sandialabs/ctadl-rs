@@ -195,6 +195,10 @@ pub struct ClassFile {
     pub major_version: u16,
     /// Constant pool; 1-based index i -> pool[(i-1)]. None = unusable slot after Long/Double.
     pub constant_pool: Vec<Option<CpEntry>>,
+    /// Byte offset, in the raw `.class` bytes, of the class header: `access_flags`, then
+    /// `this_class` and `super_class`, [`Self::HEADER_LEN`] bytes in all. Where the class is
+    /// declared.
+    pub header_offset: u32,
     pub access_flags: u16,
     pub this_class: u16,
     pub super_class: u16,
@@ -254,6 +258,9 @@ pub struct ExceptionEntry {
 // --- Constant pool accessors ---
 
 impl ClassFile {
+    /// The length of the class header at [`Self::header_offset`].
+    pub const HEADER_LEN: u32 = 6;
+
     /// Get constant pool entry by 1-based index.
     pub fn get_cp(&self, index: u16) -> ClassFileResult<&CpEntry> {
         let i = (index as usize)

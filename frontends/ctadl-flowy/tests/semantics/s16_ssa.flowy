@@ -1,0 +1,22 @@
+// S16: SSA is definitional. A variable is one cell per version, so `x1 = src; x2 = clean;
+// sink(x2)` reports nothing...
+def Variables() {
+s:
+  x = source(S);
+  x = 1;
+  errsink(x, S);
+  return;
+}
+
+// ...while memory is flow-insensitive: `sink(p.f); p.f = src` is reported.
+def Memory() {
+s:
+  y = p.f;
+  sink(y, S);
+  a = source(S);
+  p.f = a;
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: Memory: sink(%S)#0 <- %S

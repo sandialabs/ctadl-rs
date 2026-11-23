@@ -1,0 +1,12 @@
+source(F::return, kind = "UserInput") :-
+  fun(F, name = "source", parent = "LJniArgShift;");
+source(F::return, kind = "UserInput") :-
+  fun(F, language in {"pcode", "lua", "c", "flowy"}, parent = "LJniArgShift;"),
+  F = "source";
+
+sink(F::arg(0), kind = "TaintedData") :-
+  fun(F, name = "sink", parent = "LJniArgShift;");
+sink(F::arg(0), kind = "TaintedData") :-
+  fun(F, language in {"pcode", "lua", "c", "flowy"}, parent = "LJniArgShift;"),
+  F = "sink";
+

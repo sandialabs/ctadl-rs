@@ -7,7 +7,7 @@
  *   - `sink_hit` must be reached. The bytes behind `req->arg` are the source's bytes, and no
  *     libc call is on the data path. Nothing in this program spells `.arg.deref` in one frame
  *     (`run` loads the pointer, the sink derefs its own formal), so if `compute_paths` admitted
- *     a compound access path only by concatenating a *model* path with a program path,
+ *     a compound path only by concatenating a *model* path with a program path,
  *     `arg.deref` would never be admissible and an index built with no models would lose the
  *     flow.
  *
@@ -17,7 +17,7 @@
  *     reach the constant sibling `dry_run` here, and would "find" the tutorial's flow through
  *     the pointer `arg` at the empty path rather than through the bytes.
  *
- * See `test_cli_query_c_pointer_field_without_models` in tests/cli.rs.
+ * See `test_cli_query_c_pointer_field_without_models` in tests/integration/cli.rs.
  */
 char *source(void);
 void  sink_hit(const char *s);

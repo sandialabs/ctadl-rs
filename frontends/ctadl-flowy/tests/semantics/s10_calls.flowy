@@ -1,0 +1,43 @@
+// S10: a call is an instance of the callee, so `r1 = id(a); r2 = id(b)` gives `r2` only `b`.
+def Id(p): 1 {
+s:
+  return p;
+}
+
+def Instances() {
+s:
+  a = source(S);
+  r1 = Id(a);
+  r2 = Id(b);
+  sink(r1, S);
+  errsink(r2, S);
+  return;
+}
+
+// A call to a function with no body is zero assignments.
+def Bodyless() {
+s:
+  a = source(S);
+  r = Unknown(a);
+  errsink(r, S);
+  return;
+}
+
+// A callee's write to its parameter's field reaches the caller's argument.
+def SetF(p) {
+s:
+  p.f = source(S);
+  return;
+}
+
+def WriteBack() {
+s:
+  SetF(o);
+  r = o.f;
+  sink(r, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: Instances: sink(%S)#0 <- %S
+// expect: WriteBack: sink(%S)#0 <- %S

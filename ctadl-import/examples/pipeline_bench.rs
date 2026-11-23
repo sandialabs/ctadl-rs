@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use ctadl_import::SourceInfoMode;
 use ctadl_import::load_import;
-use ctadl_ir::mir::{Program, StatementKind};
+use ctadl_ir::cir::{Program, StatementKind};
 use ctadl_ir::ssa;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -34,7 +34,18 @@ fn fingerprint(p: &Program) -> Fingerprint {
                 statements += 1;
                 match s.kind {
                     StatementKind::Phi { .. } => phis += 1,
-                    StatementKind::Load { .. } => loads += 1,
+                    // A load is a copy whose source reads through memory.
+                    StatementKind::Assign {
+                        ref dest,
+                        ref sources,
+                    } if dest.is_pathless()
+                        && sources.iter().any(|e| {
+                            e.access_path()
+                                .is_some_and(|ap| ap.segments.iter().any(|s| !s.is_offset()))
+                        }) =>
+                    {
+                        loads += 1
+                    }
                     _ => {}
                 }
             }

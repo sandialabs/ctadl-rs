@@ -5,44 +5,5 @@
   ],
   "unexpected_lines": [
     18
-  ],
-  "model_generators": [
-    {
-      "find": "methods",
-      "where": [
-        {
-          "constraint": "signature_match",
-          "qualified-ids": [
-            "lib.reader.read",
-            "read"
-          ]
-        }
-      ],
-      "model": {
-        "sources": [
-          {
-            "kind": "UserInput",
-            "port": "Return"
-          }
-        ]
-      }
-    },
-    {
-      "find": "methods",
-      "where": [
-        {
-          "constraint": "signature_match",
-          "qualified-id": "main.sink"
-        }
-      ],
-      "model": {
-        "sinks": [
-          {
-            "kind": "Output",
-            "port": "Argument(0)"
-          }
-        ]
-      }
-    }
   ]
 }

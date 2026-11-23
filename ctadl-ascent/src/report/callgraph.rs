@@ -18,13 +18,13 @@ use serde::Serialize;
 
 use crate::codegen::{ChaLanguage, ClassHierarchyAnalysis, InstantiationFinder};
 use crate::stats::{Distribution, top_n_share};
+use ctadl_ir::cir::visit::Visitor;
+use ctadl_ir::cir::{
+    FunctionIdx, ProgramInfo, StatementKind, Symbol,
+    call::{CallStyle, CilMethodRef, JavaDispatch, JavaMethodRef, TypeFacts},
+};
 use ctadl_ir::graph::{DirectedGraph, Successors, scc::Sccs};
 use ctadl_ir::index::idx::Idx;
-use ctadl_ir::mir::visit::Visitor;
-use ctadl_ir::mir::{
-    FunctionIdx, ProgramInfo, StatementKind, Symbol,
-    call::{CallStyle, JavaDispatch, TypeFacts},
-};
 
 /// A method's simple name and descriptor, matched exactly. Obfuscation renames and
 /// repackages classes, but an `equals(Ljava/lang/Object;)Z` override still has to keep the
@@ -892,7 +892,7 @@ impl Walk {
 /// Walks every statement of every function once, recording the call census, the site count
 /// per virtual-call signature, and the caller-to-callee edges that the fan-in and SCC
 /// sections need. This is the only pass over the program.
-fn walk(program: &ctadl_ir::mir::Program) -> Walk {
+fn walk(program: &ctadl_ir::cir::Program) -> Walk {
     let mut w = Walk::default();
     // Every function gets a node up front. That keeps a function with no calls in the call
     // graph, and keeps the node ids of the program's own functions stable.
@@ -916,14 +916,14 @@ fn walk(program: &ctadl_ir::mir::Program) -> Walk {
                             w.caller_direct[caller as usize].push(id);
                         }
                     }
-                    CallStyle::JavaCall {
-                        cls,
-                        simple_name,
-                        descriptor,
-                        dispatch,
-                        super_start,
-                        receiver: _,
-                    } => {
+                    CallStyle::JavaCall { method, .. } => {
+                        let JavaMethodRef {
+                            cls,
+                            simple_name,
+                            descriptor,
+                            dispatch,
+                            super_start,
+                        } = &**method;
                         w.census.virtual_ += 1;
                         let id = w.key(
                             (cls.clone(), simple_name.clone(), descriptor.clone()),
@@ -948,12 +948,12 @@ fn walk(program: &ctadl_ir::mir::Program) -> Walk {
                         );
                         w.caller_keys[caller as usize].push((id, JavaDispatch::Unknown));
                     }
-                    CallStyle::CilCall {
-                        cls,
-                        simple_name,
-                        descriptor,
-                        receiver: _,
-                    } => {
+                    CallStyle::CilCall { method, .. } => {
+                        let CilMethodRef {
+                            cls,
+                            simple_name,
+                            descriptor,
+                        } = &**method;
                         // `callvirt` has no dispatch kind of its own, the way Lua has none.
                         w.census.virtual_ += 1;
                         let id = w.key(
@@ -981,9 +981,9 @@ pub fn measure(
     matches: &crate::models::ProgramModelMatches,
 ) -> CallGraphReport {
     let top = opts.top;
-    let language = match &program_info.vmt {
-        ctadl_ir::call::VirtualMethodTable::Java { .. } => Language::Java,
-        ctadl_ir::call::VirtualMethodTable::Lua { .. } => Language::Lua,
+    let language = match &program_info.vmt.dispatch {
+        ctadl_ir::call::Dispatch::Java { .. } => Language::Java,
+        ctadl_ir::call::Dispatch::Lua { .. } => Language::Lua,
         // `callvirt` records no dispatch kind, so CIL has no per-kind split to report.
         _ => Language::Other,
     };
@@ -1768,11 +1768,12 @@ impl Successors for ChaCallGraph<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ctadl_ir::mir::builder::FunctionBuilder;
-    use ctadl_ir::mir::call::{
-        CallObject, JavaClass, JavaMethod, JavaSignature, JavaSimpleName, VirtualMethodTable,
+    use ctadl_ir::cir::builder::FunctionBuilder;
+    use ctadl_ir::cir::call::{
+        CallObject, Dispatch, JavaClass, JavaMethod, JavaSignature, JavaSimpleName,
+        VirtualMethodTable,
     };
-    use ctadl_ir::mir::{Exp, FunctionData, Program};
+    use ctadl_ir::cir::{Exp, FunctionData, JavaMethodRef, Program};
 
     /// A program with one interface `LI;` (one abstract `m()V`, so it is functional), two
     /// implementers, a class `LC;` with a subclass, and one caller making one call of each
@@ -1789,9 +1790,10 @@ mod tests {
                 JavaMethod(format!("{cls}->{name}()V").into()),
             )
         };
-        let vmt = VirtualMethodTable::Java {
-            // `LI;` itself declares no implementation. An interface method has no body, so
-            // it goes in `abstract_methods` below instead.
+        let vmt = VirtualMethodTable::new(Dispatch::Java {
+            // `LI;->m` is abstract, so it is in `abstract_methods` below. The frontends also
+            // give it a row here, a CHA target with no body; it is left out so that the
+            // counts below are of implementations only.
             methods: vec![
                 method("LA;", "m"),
                 method("LB;", "m"),
@@ -1821,7 +1823,7 @@ mod tests {
                 JavaSignature("()V".into()),
             )],
             natives: Vec::new(),
-        };
+        });
 
         let mut f = FunctionData {
             name: "Lmain;->run()V".to_string(),
@@ -1845,11 +1847,14 @@ mod tests {
             b.create_call(
                 CallStyle::JavaCall {
                     receiver: x.clone(),
-                    cls: cls.into(),
-                    simple_name: name.into(),
-                    descriptor: "()V".into(),
-                    dispatch,
-                    super_start: None,
+                    method: JavaMethodRef {
+                        cls: cls.into(),
+                        simple_name: name.into(),
+                        descriptor: "()V".into(),
+                        dispatch,
+                        super_start: None,
+                    }
+                    .into(),
                 },
                 Vec::new(),
                 Vec::new(),

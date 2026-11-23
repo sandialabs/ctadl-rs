@@ -22,17 +22,14 @@ instantiation, and no inference rule knows a bridge or a dispatch model was invo
 use hashbrown::hash_map::HashMap;
 use hashbrown::hash_set::HashSet;
 
-use crate::codegen::{GLOBALS_INDEX, RETURN_INDEX};
-use crate::error::Error;
+use crate::codegen::RETURN_INDEX;
 use crate::facts::{
-    self, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, PackedInsnSiteId,
+    self, FlowVariable, FlowVertex, FormalIndex, FormalType, FunctionId, PackedInsnSiteId, Root,
 };
 use crate::index_engine::IndexFacts;
 use crate::index_engine::source_info::IndexSourceInfo;
-use crate::models::matches::{
-    BridgeSideMatches, Disposition, ModelPort, PropagationMatch, diagnose,
-};
-use crate::models::spec::{BridgePort, BridgeSpec, PortPair, Severity};
+use crate::models::matches::{Disposition, ModelPort, PropagationMatch};
+use crate::models::spec::{PortPair, ResolvedBridge};
 use crate::models::{FormalIndexTypeTag, ProgramModelMatches};
 
 /// What phase 2 did with one bridge generator, for the unconditional `info` line.
@@ -77,10 +74,9 @@ pub struct ModelCodegenReport {
 /// Call once, after the import loop and before the facts are saved.
 pub fn codegen_model_matches(
     matches: &ProgramModelMatches,
-    specs: &[BridgeSpec],
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
-) -> Result<ModelCodegenReport, Error> {
+) -> ModelCodegenReport {
     // Both arity snapshots are taken up front, before this phase pushes a single row.
     //
     // `arg_arity` is what `Argument(*)` expands over, and taking it here is what makes the
@@ -97,11 +93,11 @@ pub fn codegen_model_matches(
         .copied()
         .chain(dispatch_propagations(matches))
         .collect();
-    Ok(ModelCodegenReport {
+    ModelCodegenReport {
         summaries: codegen_propagations(&propagations, &arg_arity, facts, source_info),
         declared_paths: codegen_declared_paths(matches, facts),
-        bridges: codegen_bridges(specs, matches, &num_params, facts, source_info)?,
-    })
+        bridges: codegen_bridges(matches, &num_params, facts, source_info),
+    }
 }
 
 /// A matched dispatch model's propagations, against the synthetic function phase 1 named.
@@ -143,7 +139,7 @@ fn dispatch_propagations(
 
 /// Turns matched propagation models into `facts.summary` rows.
 ///
-/// This is where a propagation's access paths enter `model_paths` -- the bucket that
+/// This is where a propagation's port paths enter `model_paths` -- the bucket that
 /// concatenates with every program path -- so the port semantics documented for `propagation`
 /// depend on the rows landing here rather than in `facts.paths`.
 fn codegen_propagations(
@@ -163,33 +159,29 @@ fn codegen_propagations(
             // may or may not be in this project; that is not an error.
             continue;
         };
-        let dst_index = expand_port(&prop.dst, func_id, arg_arity);
-        let src_index = expand_port(&prop.src, func_id, arg_arity);
-        for dst_index in &dst_index {
-            // Ensure formal_param exists for the indices used in summaries: `locals` is seeded
-            // from formals and the summary rule joins on them, so without these rows a
-            // modelled function is silently lost.
-            facts.formal_param.push((
-                func_id,
-                FlowVariable::formal_index(*dst_index),
-                FormalType::Shared,
-            ));
-            for src_index in &src_index {
+        let dst_roots = expand_port(&prop.dst, func_id, arg_arity);
+        let src_roots = expand_port(&prop.src, func_id, arg_arity);
+        // Ensure formal_param exists for the formals used in summaries: `locals` is seeded
+        // from formals and the summary rule joins on them, so without these rows a modelled
+        // function is silently lost. A global is no formal: it is a root by itself (S15).
+        for root in dst_roots.iter().chain(&src_roots) {
+            if let Some(i) = root.as_formal() {
                 facts.formal_param.push((
                     func_id,
-                    FlowVariable::formal_index(*src_index),
+                    FlowVariable::formal_index(i),
                     FormalType::Shared,
                 ));
-                if dst_index == src_index {
+            }
+        }
+        for dst_root in &dst_roots {
+            for src_root in &src_roots {
+                // Only the identity row is a no-op; `arg(0).f <- arg(0).g` is a real flow.
+                if dst_root == src_root && prop.dst.path == prop.src.path {
                     continue;
                 }
-                facts.summary.push((
-                    func_id,
-                    *dst_index,
-                    prop.dst.path,
-                    *src_index,
-                    prop.src.path,
-                ));
+                facts
+                    .summary
+                    .push((func_id, *dst_root, prop.dst.path, *src_root, prop.src.path));
                 emitted += 1;
             }
         }
@@ -197,33 +189,33 @@ fn codegen_propagations(
     emitted
 }
 
-/// The formal indices one model port denotes. `Argument(*)` is the only one that fans out, and
-/// it is why this cannot run before every import is codegen'd.
+/// The roots one model port denotes. `Argument(*)` is the only one that fans out, and it is
+/// why this cannot run before every import is codegen'd.
 fn expand_port(
     port: &ModelPort,
     func_id: FunctionId,
     arg_arity: &HashMap<FunctionId, i16>,
-) -> Vec<FormalIndex> {
+) -> Vec<Root> {
     use FormalIndexTypeTag::*;
     match port.tag {
         Index => vec![port.index.expect("an Index port carries one").into()],
         Return => vec![RETURN_INDEX.into()],
-        Global => vec![GLOBALS_INDEX.into()],
+        Global(g) => vec![g.into()],
         AnyArgument => arg_arity
             .get(&func_id)
             .map(|n| (0..*n).map(|i| i.into()).collect())
             .unwrap_or_default(),
-        // `Variable(name)` ports are rejected on propagations in Stage 1 (see
-        // `json::visit_propagation`), so they never reach summary codegen.
+        // A local port (`Variable(name)`, `local(L)`) is valid only on a source or sink: the
+        // JSON validator and the DSL checker both reject it on a propagation.
         Local => unreachable!("Variable(name) is not valid on a propagation port"),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Declared access paths
+// Declared paths
 // ---------------------------------------------------------------------------
 
-/// Seeds user-declared access paths into the initial indexer paths.
+/// Seeds user-declared paths (`access_paths`) into the initial indexer paths.
 ///
 /// This registry exists because path *composition* past a bridge seam is exact-match only: a
 /// pathful bridge composes with its callee's derived summary only where the summary's endpoints
@@ -231,128 +223,61 @@ fn expand_port(
 /// output, so nothing can enumerate them -- but a user who knows the callee's summary shape can
 /// name them by hand. Flows needing residues nobody declared are dropped, silently.
 fn codegen_declared_paths(matches: &ProgramModelMatches, facts: &mut IndexFacts) -> usize {
-    for path in &matches.access_paths {
+    for path in &matches.declared_paths {
         facts.paths.push((*path,));
     }
-    matches.access_paths.len()
+    matches.declared_paths.len()
 }
 
 // ---------------------------------------------------------------------------
 // Bridges
 // ---------------------------------------------------------------------------
 
-/// Pairs each bridge spec's two match sets, reports what it found, and emits the facts.
+/// Emits the bridges the DSL engine grounded, and reports each.
+///
+/// Both sides are function names already: a DSL rule is grounded before its heads are
+/// instantiated.
 fn codegen_bridges(
-    specs: &[BridgeSpec],
     matches: &ProgramModelMatches,
     num_params: &HashMap<FunctionId, i16>,
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
-) -> Result<Vec<BridgeStats>, Error> {
-    let mut stats = Vec::with_capacity(specs.len());
-    for (i, spec) in specs.iter().enumerate() {
-        let side = matches.bridges.get(i);
-        classify(spec, side)?;
-
-        let mut pairs = 0usize;
-        for (a_name, b_name) in side.pairs() {
-            // Both sides must be interned by now; they are, unless the matched function was
-            // named in a VMT but never reached codegen (a method table entry with no lowered
-            // function and no call site).
-            let (Some(a), Some(b)) = (
-                source_info.sites.get_function_id(facts::Function(a_name)),
-                source_info.sites.get_function_id(facts::Function(b_name)),
-            ) else {
-                log::warn!(
-                    "bridge {}: '{}' or '{}' is not in the fact base, so this pair is not \
-                     bridged",
-                    spec.provenance(),
-                    a_name,
-                    b_name
-                );
-                continue;
-            };
-            let ports = resolve_ports(spec, a, b, num_params);
-            emit_bridge(spec, a, b, &ports, num_params, facts, source_info);
-            pairs += 1;
-        }
+) -> Vec<BridgeStats> {
+    let mut stats = Vec::with_capacity(matches.resolved_bridges.len());
+    for bridge in &matches.resolved_bridges {
+        let (Some(a), Some(b)) = (
+            source_info
+                .sites
+                .get_function_id(facts::Function(bridge.from)),
+            source_info
+                .sites
+                .get_function_id(facts::Function(bridge.to)),
+        ) else {
+            log::warn!(
+                "bridge {}: '{}' or '{}' is not in the fact base, so this pair is not bridged",
+                bridge.provenance,
+                bridge.from,
+                bridge.to
+            );
+            stats.push(BridgeStats {
+                provenance: bridge.provenance.clone(),
+                from_matched: 1,
+                to_matched: 1,
+                pairs: 0,
+            });
+            continue;
+        };
+        // A bridge is a call (S15): it maps the written ports and nothing for globals, which
+        // both sides already share (G5, G7).
+        emit_bridge(bridge, a, b, num_params, facts, source_info);
         stats.push(BridgeStats {
-            provenance: spec.provenance(),
-            from_matched: side.from.len(),
-            to_matched: side.to.len(),
-            pairs,
+            provenance: bridge.provenance.clone(),
+            from_matched: 1,
+            to_matched: 1,
+            pairs: 1,
         });
     }
-    Ok(stats)
-}
-
-/// Acts on the verdict [`diagnose`] returns: the reporting semantics deferred from streaming.
-///
-/// The verdict itself needs no fact base -- see [`diagnose`] -- so it lives next to the match
-/// sets it reads. All that is left here is turning a severity into a warning, an error, or
-/// silence.
-fn classify(spec: &BridgeSpec, side: &BridgeSideMatches) -> Result<(), Error> {
-    diagnose(spec, side).map_or(Ok(()), |(severity, message)| report(severity, message))
-}
-
-fn report(severity: Severity, message: String) -> Result<(), Error> {
-    match severity {
-        Severity::Ignore => Ok(()),
-        Severity::Warn => {
-            log::warn!("{message}");
-            Ok(())
-        }
-        Severity::Error => Err(Error::Model { message }),
-    }
-}
-
-/// The port map to emit for one pair, including the ports the user never writes.
-///
-/// The globals pseudo-parameter is mapped **unconditionally** and is not user-visible: without
-/// it heap flows do not cross the boundary at all. When `arguments` was omitted entirely the map
-/// is the identity over the arity the two sides share, plus `Return`.
-fn resolve_ports(
-    spec: &BridgeSpec,
-    a: FunctionId,
-    b: FunctionId,
-    num_params: &HashMap<FunctionId, i16>,
-) -> Vec<PortPair> {
-    let mut ports = if spec.ports_given {
-        spec.ports.clone()
-    } else {
-        let shared = num_params
-            .get(&a)
-            .copied()
-            .unwrap_or(0)
-            .min(num_params.get(&b).copied().unwrap_or(0));
-        if shared <= 0 {
-            // The two sides share no recovered parameter, so an identity map is empty. That is
-            // exactly the case a bodyless stub produces, and it is the silent-failure mode this
-            // whole design is about, so say it.
-            log::warn!(
-                "bridge {}: no 'arguments' port map was given and the two sides share no \
-                 recovered parameter, so only the return value and globals cross. Write an \
-                 'arguments' map naming the argument correspondence.",
-                spec.provenance()
-            );
-        }
-        (0..shared.max(0))
-            .map(|i| {
-                let port = BridgePort {
-                    index: FormalIndex::new(i),
-                    path: facts::Path::empty(),
-                };
-                PortPair {
-                    from: port,
-                    to: port,
-                    direction: crate::models::Direction::Both,
-                }
-            })
-            .chain(std::iter::once(PortPair::ret()))
-            .collect()
-    };
-    ports.push(PortPair::globals());
-    ports
+    stats
 }
 
 /// Emits the facts for one bridged pair `(a, b)`.
@@ -361,25 +286,23 @@ fn resolve_ports(
 /// as the three steps that make that true: name the callee's parameter locally, wire the
 /// caller's port to it, pass it.
 fn emit_bridge(
-    spec: &BridgeSpec,
+    bridge: &ResolvedBridge,
     a: FunctionId,
     b: FunctionId,
-    ports: &[PortPair],
     num_params: &HashMap<FunctionId, i16>,
     facts: &mut IndexFacts,
     source_info: &mut IndexSourceInfo,
 ) {
+    let ports = &bridge.ports;
+    let provenance = &bridge.provenance;
     // A *fresh* site. Call-argument pseudo-variables are keyed on the instruction id, so
     // reusing an existing site's id would alias its argument n to this bridge's argument n --
-    // a spurious bidirectional flow between two unrelated arguments. Under cross-product
-    // pairing several bridge sites routinely share one caller, which is also why the
-    // temporaries below are keyed on `(site, index)` rather than on the index alone.
+    // a spurious bidirectional flow between two unrelated arguments.
     //
     // The site gets no `source_map` entry: a synthetic site has no span, and the SARIF step
     // emitter returns early for a location-less site rather than inventing one. Attributing the
     // crossing to the stub's own declaration span is a scoped follow-up.
     let site = source_info.add_insn_site(a);
-    let insn = site.insn_id;
     let site: PackedInsnSiteId = site.try_into().expect("packing a fresh bridge site");
     facts.call.push((site, b));
 
@@ -429,7 +352,7 @@ fn emit_bridge(
             facts.actual_param.push((
                 site,
                 port.to.index,
-                FlowVertex(FlowVariable::formal_index(port.from.index), port.from.path),
+                FlowVertex::new(FlowVariable::formal_index(port.from.index), port.from.path),
             ));
             continue;
         }
@@ -439,22 +362,24 @@ fn emit_bridge(
         // that the caller's port corresponds to a *sub-path* of the callee's parameter; the
         // temporary is what expresses it. Ports sharing a callee index are then separated by
         // field-sensitivity instead of collapsing onto one pseudo-variable and aliasing.
-        let t = temp_for(a, insn, port.to.index);
+        let t = temp_for(bridge, port.to.index);
         if temp_made.insert(*port.to.index) {
             // The temporary IS the callee's parameter, so it is passed whole. It needs no
             // `formal_param` row of its own: `locals` seeds from formals and a temporary is a
             // conduit, not a source.
-            facts
-                .actual_param
-                .push((site, port.to.index, FlowVertex(t, facts::Path::empty())));
+            facts.actual_param.push((
+                site,
+                port.to.index,
+                FlowVertex::new(t, facts::Path::empty()),
+            ));
         }
 
         // Every path here is literal: `from_path` on the caller's formal, `to_path` on the
         // temporary. Nothing is concatenated, so `program_paths` -- seeded from both endpoints
         // of every `assign` and every `actual_param` vertex -- registers them for free. There
         // is no `facts.paths` push anywhere in a bridge.
-        let caller = FlowVertex(FlowVariable::formal_index(port.from.index), port.from.path);
-        let callee = FlowVertex(t, port.to.path);
+        let caller = FlowVertex::new(FlowVariable::formal_index(port.from.index), port.from.path);
+        let callee = FlowVertex::new(t, port.to.path);
         // `assign` is keyed on the packed instruction site, from which the function is derived.
         // (The function-keyed shape is the persisted parquet form only.)
         if port.direction.inward() {
@@ -477,22 +402,24 @@ fn emit_bridge(
     let recovered = num_params.get(&b).copied().unwrap_or(0);
     if recovered < expected {
         log::warn!(
-            "bridge {}: the callee has {} recovered parameter(s) but the port map names {}; \
-             the prototype is incomplete, so some argument(s) will not flow past it",
-            spec.provenance(),
-            recovered,
-            expected
+            "bridge {provenance}: the callee has {recovered} recovered parameter(s) but the port \
+             map names {expected}; the prototype is incomplete, so some argument(s) will not \
+             flow past it"
         );
     }
 }
 
-/// The local standing for callee parameter `index` at one bridge site.
+/// The local standing for callee parameter `index` of `bridge`.
 ///
-/// Keyed on `(site, index)`, not on the index alone: cross-product pairing puts several bridge
-/// sites in one caller, and a temporary named only for its index would merge their parameters.
-fn temp_for(func: FunctionId, insn: crate::facts::InsnId, index: FormalIndex) -> FlowVariable {
+/// Keyed on the bridge's content, `(rule, callee, index)`, with no function or instruction id,
+/// so two indexes of one program name it alike. A local is scoped to its caller, and the
+/// emitter merges every port of one rule for one `(caller, callee)` into one bridge, so
+/// `(rule, callee)` tells apart the bridges of one caller; the index tells apart its ports.
+/// Two model files with one file name and a rule label in common, bridging the same pair,
+/// share their temporaries, which merges their flows: less precise, never missing a flow.
+fn temp_for(bridge: &ResolvedBridge, index: FormalIndex) -> FlowVariable {
     FlowVariable::local(facts::Str::from(
-        format!("$bridge{}_{}#{}", func.id, insn.id, *index).as_str(),
+        format!("$bridge[{}]{}#{}", bridge.rule_name, bridge.to, *index).as_str(),
     ))
 }
 

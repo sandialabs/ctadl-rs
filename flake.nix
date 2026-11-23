@@ -84,6 +84,8 @@
 
         cil = import ./nix/cil.nix { inherit pkgs cecil dnlib; };
 
+        verus = import ./nix/verus.nix { inherit pkgs fenix; };
+
         # The external toolchain `xtask regression` expects on PATH.
         # Deliberately excludes this repo's own package so that the
         # dev shell can be used to run parts of the suite against a locally
@@ -103,6 +105,9 @@
             # `xtask regression` validates the SARIF each taint case emits by
             # running this; without it on PATH the checks self-skip.
             checksarif
+            # `xtask regression` checks `ctadl diff-index`'s counts against SQL
+            # run by this; without it on PATH the check self-skips.
+            pkgs.duckdb
             # The C compiler `pick_toolchain` prefers. A native `pkgs.gcc` here
             # would also claim `cc`, and on Darwin that is fatal: rustc links
             # through `cc`, and gcc passes -no_compact_unwind, so the binary
@@ -147,7 +152,13 @@
         };
       in
       {
-        packages.default = naersk-lib.buildPackage ./.;
+        packages.default = naersk-lib.buildPackage {
+          src = ./.;
+          version = workspaceVersion;
+          # `default-members` leaves out `xtask`, which the `regression` check
+          # runs from this package.
+          cargoBuildOptions = x: x ++ [ "--workspace" ];
+        };
         # Exposed so `nix build .#cecil-dump` can warm the cache on its own.
         packages.cecil-dump = cil.cecilDump;
         packages.cil-fixtures = cil.cilFixtures;
@@ -157,11 +168,8 @@
         packages.gap-gen = cil.gapGen;
         # Legacy ctadl: nix run .#ctadl-souffle
         packages.ctadl-souffle = ctadl-souffle.packages.${system}.ctadl-full;
-        # Run a wrapper around ctadl-ascent that lets Ghidra process pcode
-        packages.legacy-pcode-cli = pkgs.writeShellScriptBin "ctadl-legacy-pcode-cli" ''
-          ${self.packages.${system}.default}/bin/ctadl legacy-pcode-cli "$@"
-        '';
         packages.checksarif = checksarif;
+        packages.verus = verus;
         # Example target binaries live under `legacyPackages` rather than
         # `packages` on purpose: `nix flake check` requires every
         # `packages.<system>.<name>` to be a flat derivation, but this is a
@@ -242,12 +250,6 @@
                   # Point it at the ctadl that ships in packages.default instead.
                   export CTADL_BIN="${self.packages.${system}.default}/bin/ctadl"
                   export CTADL_ANDROID_ICC_APKS="${android.droidbenchIccApks}"
-                  # The `models:*` checks hold the model files ctadl ships to
-                  # `ctadl-model-generator.schema.json`. Both live in the
-                  # ctadl-ascent crate, outside ./nightly, and this sandbox has
-                  # no source tree, so point xtask at them explicitly or they
-                  # would self-skip here -- which is the one place the drift is
-                  # meant to be caught.
                   # The `cil:*` checks read Cecil's test corpus (the pinned
                   # input), the Cecil goldens and the built fixtures, and diff
                   # against the `cecil-dump` that testEnv puts on PATH.
@@ -255,7 +257,6 @@
                     --frontend dex,jvm,pcode,lua,jni,c,android-icc,cil \
                     --jvm-samples ${./readers/jvm-reader/tests/sample} \
                     --dex-apk ${./xtask/tests/dex/com.noto_54.apk} \
-                    --models-dir ${./ctadl-ascent/src/models} \
                     --cil-goldens ${./xtask/cil-goldens} \
                     --cecil-src ${cecil} \
                     --cil-fixtures ${cil.cilFixtures}
@@ -263,11 +264,84 @@
                   mkdir -p "$out"
                 '';
 
+            # The LSM property tests at many more cases than the 32 each PR runs.
+            lsm-property-tests = naersk-lib.buildPackage {
+              src = ./.;
+              version = workspaceVersion;
+              name = "lsm-property-tests";
+              mode = "test";
+              # A separate dependency build would get `--test mmap_props`
+              # too, and its stub sources have no such target.
+              singleStep = true;
+              cargoBuildOptions =
+                x:
+                x
+                ++ [
+                  "--package"
+                  "lsm"
+                ];
+              cargoTestOptions =
+                x:
+                x
+                ++ [
+                  "--package"
+                  "lsm"
+                  "--test"
+                  "mmap_props"
+                ];
+              PROPTEST_CASES = "4096";
+            };
+
+            # The Verus proofs, as ./scripts/verus.sh runs them. Only the four crates' sources
+            # are copied in, so an edit elsewhere in the tree does not rerun the proofs.
+            verusCheck =
+              pkgs.runCommand "ctadl-checks-verus"
+                {
+                  nativeBuildInputs = [ verus ];
+                }
+                ''
+                  export HOME="$TMPDIR"
+                  for crate in order-laws:${./order-laws/src} multiset-diff:${./multiset-diff/src} index-canon:${./index-canon/src} sarif-canon:${./sarif-canon/src}; do
+                    mkdir -p "''${crate%%:*}"
+                    cp -r "''${crate#*:}" "''${crate%%:*}/src"
+                  done
+                  bash ${./scripts/verus.sh} . verus-out
+                  mkdir -p "$out"
+                '';
+
           in
           {
-            inherit regression;
+            inherit regression lsm-property-tests;
+            verus = verusCheck;
             inherit (android) dex-reader-tests jvm-reader-tests;
           };
+
+        # `nix run .#check-all` runs ./scripts/check-all.sh -- the `test` workflow's checks and
+        # the nightly suite -- against the working tree, outside the sandbox, with the
+        # regression toolchain and the dev shell's settings for it.
+        apps.check-all = {
+          type = "app";
+          program = "${
+            pkgs.writeShellApplication {
+              name = "check-all";
+              runtimeInputs = [
+                testEnv
+                verus
+                pkgs.git
+              ];
+              text = ''
+                export PATH="${android.androidSdkBuildTools}:$PATH"
+                export ANDROID_SDK_ROOT="${android.androidSdk.androidsdk}/libexec/android-sdk"
+                export GHIDRA_HOME="${pkgs.ghidra-bin}/lib/ghidra"
+                export CECIL_SRC="${cecil}"
+                export CIL_READER_FIXTURES="${cil.cilFixtures}"
+                export CTADL_ANDROID_ICC_APKS="${android.droidbenchIccApks}"
+                export DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+                exec bash "$(git rev-parse --show-toplevel)/scripts/check-all.sh" "$@"
+              '';
+            }
+          }/bin/check-all";
+        };
 
         formatter = pkgs.nixfmt;
         # One shell for everything: the day-to-day Rust/Nix tooling plus testEnv,
@@ -304,6 +378,8 @@
               jadx
               scrcpy
               android.androidLldb
+              # `verus`, to run the proofs `checks.verus` runs.
+              verus
             ];
             packages = [ testEnv ];
 

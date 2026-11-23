@@ -21,7 +21,7 @@
 //! the shared core. C++-only constructs (classes, methods, references, namespaces,
 //! templates, …) are later milestones and may still error.
 
-use ctadl_ir::mir::{
+use ctadl_ir::cir::{
     CallEdges, CallObject, CallStyle, Exp, ParameterIdx, Program, Statement, StatementKind,
     VariableRef,
 };
@@ -32,8 +32,8 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, QueryCursor};
 
 use super::{
-    ArgShape, ClassInfo, Context, GrammarHooks, MatchExtractor, OverloadSig, ParamType, PlaceRoot,
-    RawPath, ReturnedPlace, RootOp, ScopeView, TranslationUnit, VarKind, compile_query_for,
+    AccessPath, ArgShape, ClassInfo, Context, GrammarHooks, MatchExtractor, OverloadSig, ParamType,
+    PlaceRoot, ReturnedPlace, RootOp, ScopeView, TranslationUnit, VarKind, compile_query_for,
     declarator_leaf_ident, declared_class, function_declarator_of, integer_literal,
     is_class_member_definition, is_namespaced_definition, lower_units, mangle_overload,
     node_has_const_qualifier, param_types, returns_void, signature_text, template_erased_name,
@@ -2148,7 +2148,7 @@ fn cpp_copy_args<'a>(
             scope_view,
             &mut program[scope_view.fidx].locals,
         );
-        *arg = Exp::access_path(ctx.emit_loads(program, scope_view, ap));
+        *arg = Exp::path(ctx.emit_loads(program, scope_view, ap));
     }
     Ok(())
 }
@@ -2426,7 +2426,7 @@ fn construct_array<'a>(
             scope_view,
             &mut program[scope_view.fidx].locals,
         );
-        super::push_element(&mut element.fields, Some(index));
+        super::push_element(&mut element.segments, Some(index));
         construct_subobject(ctx, program, scope_view, source, class, element, Vec::new())?;
     }
     Ok(true)
@@ -2536,7 +2536,7 @@ fn reconstruct_mvp_arg<'a>(
                 scope_view,
                 &mut program[scope_view.fidx].locals,
             );
-            Ok(Exp::access_path(ctx.emit_loads(program, scope_view, ap)))
+            Ok(Exp::path(ctx.emit_loads(program, scope_view, ap)))
         }
         // A bare value reference (`y`), an element of one (`a[1]`, spec 047), or a fallback.
         _ => {
@@ -2554,7 +2554,7 @@ fn reconstruct_mvp_arg<'a>(
                 name,
                 pd.child_by_field_name("declarator"),
             );
-            Ok(Exp::access_path(ctx.emit_loads(program, scope_view, ap)))
+            Ok(Exp::path(ctx.emit_loads(program, scope_view, ap)))
         }
     }
 }
@@ -2586,7 +2586,7 @@ fn mvp_arg_location(
     scope_view: &ScopeView,
     source: &str,
     pd: Node<'_>,
-) -> Option<super::RawPath> {
+) -> Option<super::AccessPath> {
     let name = to_str(&pd.child_by_field_name("type")?, source);
     let declarator = pd.child_by_field_name("declarator");
     if declarator.is_some_and(|d| d.kind() != "abstract_array_declarator")
@@ -2611,7 +2611,7 @@ fn mvp_element_path(
     source: &str,
     name: &str,
     declarator: Option<Node<'_>>,
-) -> super::RawPath {
+) -> super::AccessPath {
     let Some(array) = declarator.filter(|d| d.kind() == "abstract_array_declarator") else {
         return ctx.build_access_path(
             name,
@@ -2632,7 +2632,7 @@ fn mvp_element_path(
         .child_by_field_name("size")
         .filter(|size| size.kind() == "number_literal")
         .and_then(|size| super::integer_literal(to_str(&size, source)));
-    super::push_element(&mut path.fields, index);
+    super::push_element(&mut path.segments, index);
     path
 }
 
@@ -2712,7 +2712,7 @@ fn emit_ctor_call<'a>(
         scope_view,
         &mut program[scope_view.fidx].locals,
     );
-    let recv = Exp::access_path(ctx.emit_loads(program, scope_view, recv_ap));
+    let recv = Exp::path(ctx.emit_loads(program, scope_view, recv_ap));
     emit_ctor_edge(
         ctx, program, scope_view, source, class, recv, ctor_args, arg_nodes, arg_shapes, copy,
     )
@@ -2815,7 +2815,7 @@ fn ctor_arg_location<'a>(
     scope_view: &mut ScopeView,
     source: &'a str,
     node: Node<'_>,
-) -> anyhow::Result<Option<Vec<super::RawPath>>, Error> {
+) -> anyhow::Result<Option<Vec<super::AccessPath>>, Error> {
     if node.kind() == "parameter_declaration" {
         return Ok(mvp_arg_location(ctx, program, scope_view, source, node).map(|l| vec![l]));
     }
@@ -2850,7 +2850,7 @@ fn lower_new_expression<'a>(
     program: &mut Program,
     scope_view: &mut ScopeView,
     new_expr: Node<'_>,
-) -> anyhow::Result<Option<super::RawPath>, Error> {
+) -> anyhow::Result<Option<super::AccessPath>, Error> {
     // Array-new / placement-new are out of scope; leave them unrecognized.
     if new_expr.child_by_field_name("declarator").is_some()
         || new_expr.child_by_field_name("placement").is_some()
@@ -2931,7 +2931,7 @@ fn lower_new_expression<'a>(
             copy,
         )?;
     }
-    // Returned as a `RawPath` (not lowered to loads): the caller binds the pointer local to
+    // Returned as a `AccessPath` (not lowered to loads): the caller binds the pointer local to
     // this object as an *alias*, so it must keep naming the object's storage.
     Ok(Some(ctx.build_access_path(
         &obj,
@@ -3110,8 +3110,7 @@ fn cpp_lower_delete<'a>(
         return Ok(());
     };
     let location = match &recv.exp {
-        Exp::Variable(v) => RawPath::new(v.clone(), ThinVec::new()),
-        Exp::AccessPath(ap) => super::raw_path_of(ap),
+        Exp::Path(ap) => ap.clone(),
         _ => return Ok(()),
     };
     // A non-virtual destructor destroys exactly the static type: its own destructor, members
@@ -3238,7 +3237,7 @@ fn destroy_object(
     ctx: &mut Context<'_>,
     program: &mut Program,
     scope_view: &ScopeView,
-    location: RawPath,
+    location: AccessPath,
     class: &str,
     own: bool,
     depth: usize,
@@ -3255,15 +3254,13 @@ fn destroy_object(
         info.bases.clone(),
     );
     if own && has_dtor {
-        let recv = Exp::access_path(ctx.emit_loads(program, scope_view, location.clone()));
+        let recv = Exp::path(ctx.emit_loads(program, scope_view, location.clone()));
         let target = format!("{class}::~{}", simple_class_name(class));
         emit_dtor_call(ctx, program, scope_view, thin_vec![target], recv);
     }
     for (member, member_class) in members.iter().rev() {
         let mut member_location = location.clone();
-        member_location
-            .fields
-            .push(PathSegment::symbol(member.as_str()));
+        member_location.push(PathSegment::field(member.as_str()));
         destroy_object(
             ctx,
             program,
@@ -3313,9 +3310,9 @@ fn cpp_emit_member_inits<'a>(
     member_inits: &[(String, Node<'_>)],
 ) -> anyhow::Result<(), Error> {
     let this_member = |member: &str| {
-        RawPath::new(
+        AccessPath::new(
             VariableRef::new_parameter(0u32.into()),
-            thin_vec![PathSegment::symbol(member)],
+            thin_vec![PathSegment::field(member)],
         )
     };
     let (bases, member_objects) = ctx
@@ -3334,7 +3331,7 @@ fn cpp_emit_member_inits<'a>(
             .iter()
             .find(|(name, _)| *name == simple || *name == class)
         {
-            let this = RawPath::new(VariableRef::new_parameter(0u32.into()), ThinVec::new());
+            let this = AccessPath::new(VariableRef::new_parameter(0u32.into()), ThinVec::new());
             return construct_subobject(
                 ctx,
                 program,
@@ -3353,7 +3350,7 @@ fn cpp_emit_member_inits<'a>(
             .map(|(_, node)| init_args(*node))
             .unwrap_or_default();
         if has_ctor(ctx, base) {
-            let this = RawPath::new(VariableRef::new_parameter(0u32.into()), ThinVec::new());
+            let this = AccessPath::new(VariableRef::new_parameter(0u32.into()), ThinVec::new());
             construct_subobject(ctx, program, scope_view, source, base, this, init)?;
         } else {
             for arg in init {
@@ -3398,7 +3395,7 @@ fn cpp_emit_member_inits<'a>(
                         &mut program[scope_view.fidx].locals,
                     );
                     ctx.add_assign_to_program(program, scope_view, &target, &prev, Some(&arg));
-                    Exp::Variable(target.base)
+                    Exp::variable(target.base)
                 }
             });
         }
@@ -3433,7 +3430,7 @@ fn construct_subobject<'a>(
     scope_view: &mut ScopeView,
     source: &'a str,
     class: &str,
-    recv: RawPath,
+    recv: AccessPath,
     arg_nodes: Vec<Node<'_>>,
 ) -> anyhow::Result<(), Error> {
     let shapes: Vec<ArgShape> = arg_nodes
@@ -3450,7 +3447,7 @@ fn construct_subobject<'a>(
         args.push(ctx.flatten_expr(program, arg, source, scope_view)?);
     }
     let location = recv.clone();
-    let recv = Exp::access_path(ctx.emit_loads(program, scope_view, recv));
+    let recv = Exp::path(ctx.emit_loads(program, scope_view, recv));
     emit_ctor_edge(
         ctx,
         program,
@@ -3746,17 +3743,14 @@ fn cpp_lambda_expr<'a>(
                     scope_view,
                     &mut program[scope_view.fidx].locals,
                 );
-                Exp::access_path(ctx.emit_loads(program, scope_view, ap))
+                Exp::path(ctx.emit_loads(program, scope_view, ap))
             }
             Capture::Init(expr) => ctx.flatten_expr(program, expr, source, scope_view)?,
         };
         let Some(slot) = capture_slot(node, &name, &Capture::Value, source) else {
             continue;
         };
-        let target = RawPath::new(
-            VariableRef::new_global(),
-            thin_vec![PathSegment::symbol(slot.as_str())],
-        );
+        let target = AccessPath::new(ctx.global(&slot), super::in_cell(ThinVec::new()));
         ctx.add_assign_to_program(program, scope_view, &target, &value, None);
     }
     // A captured `this` is the enclosing object, copied into the lambda's slot (spec 040).
@@ -3767,11 +3761,8 @@ fn cpp_lambda_expr<'a>(
             scope_view,
             &mut program[scope_view.fidx].locals,
         );
-        let value = Exp::access_path(ctx.emit_loads(program, scope_view, ap));
-        let target = RawPath::new(
-            VariableRef::new_global(),
-            thin_vec![PathSegment::symbol(this_slot(node).as_str())],
-        );
+        let value = Exp::path(ctx.emit_loads(program, scope_view, ap));
+        let target = AccessPath::new(ctx.global(&this_slot(node)), super::in_cell(ThinVec::new()));
         ctx.add_assign_to_program(program, scope_view, &target, &value, None);
     }
     Ok(Some(Exp::ObjectRef(CallObject::FunctionPtr(
@@ -3831,16 +3822,13 @@ fn cpp_function_scan<'a>(
             for member in members {
                 let this = ctx.build_access_path(
                     "this",
-                    thin_vec![PathSegment::symbol(member.as_str())],
+                    thin_vec![PathSegment::field(member.as_str())],
                     scope_view,
                     &mut program[scope_view.fidx].locals,
                 );
-                let slot = RawPath::new(
-                    VariableRef::new_global(),
-                    thin_vec![
-                        PathSegment::symbol(this_slot(n).as_str()),
-                        PathSegment::symbol(member.as_str())
-                    ],
+                let slot = AccessPath::new(
+                    ctx.global(&this_slot(n)),
+                    super::in_cell(thin_vec![PathSegment::field(member.as_str())]),
                 );
                 ctx.post_call_copies.push((this, slot));
             }
@@ -3876,15 +3864,12 @@ fn cpp_function_scan<'a>(
     for name in shared {
         let slot = format!("<ref {} {name}>", body.start_byte());
         if let Some((idx, _)) = params.iter().find(|(_, p)| *p == name) {
-            let target = RawPath::new(
-                VariableRef::new_global(),
-                thin_vec![PathSegment::symbol(slot.as_str())],
-            );
+            let target = AccessPath::new(ctx.global(&slot), super::in_cell(ThinVec::new()));
             ctx.add_assign_to_program(
                 program,
                 scope_view,
                 &target,
-                &Exp::Variable(VariableRef::new_parameter(*idx)),
+                &Exp::variable(VariableRef::new_parameter(*idx)),
                 None,
             );
         }
@@ -4223,7 +4208,7 @@ fn cpp_operator_call<'a>(
         // their operands are evaluated.
         "new_expression" => {
             if let Some(object) = lower_new_expression(ctx, source, program, scope_view, node)? {
-                return Ok(Some(Exp::Variable(object.base)));
+                return Ok(Some(Exp::variable(object.base)));
             }
             let mut cursor = node.walk();
             let operands: Vec<Node<'_>> = node
@@ -4256,7 +4241,7 @@ fn cpp_operator_call<'a>(
                 scope_view,
                 &mut program[scope_view.fidx].locals,
             );
-            Ok(Some(Exp::Variable(path.base)))
+            Ok(Some(Exp::variable(path.base)))
         }
         // `a <op> b` with `a` an object: `a.operator<op>(b)` (spec 031).
         "binary_expression" => {
@@ -4481,9 +4466,7 @@ fn construct_temporary<'a>(
         scope_view,
         &mut program[scope_view.fidx].locals,
     );
-    Ok(Some(Exp::access_path(
-        ctx.emit_loads(program, scope_view, path),
-    )))
+    Ok(Some(Exp::path(ctx.emit_loads(program, scope_view, path))))
 }
 
 /// `m(args)` inside a member function, where `m` names a member function of the enclosing class
@@ -4574,7 +4557,7 @@ fn implicit_member_call<'a>(
         },
     ));
     ctx.emit_post_call_copies(program, scope_view);
-    Ok(Some(Exp::Variable(ret)))
+    Ok(Some(Exp::variable(ret)))
 }
 
 /// `Base::m(args)` inside a member function of a class derived from `Base` (or of `Base`
@@ -4627,7 +4610,7 @@ fn qualified_member_call<'a>(
         Some(args_node),
         &mut explicit,
     )?;
-    let mut args: ThinVec<Exp> = thin_vec![Exp::Variable(VariableRef::new_parameter(0u32.into()))];
+    let mut args: ThinVec<Exp> = thin_vec![Exp::variable(VariableRef::new_parameter(0u32.into()))];
     args.extend(explicit);
     let temp = ctx.allocator.next_temp();
     let ret = VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
@@ -4641,7 +4624,7 @@ fn qualified_member_call<'a>(
         },
     ));
     ctx.emit_post_call_copies(program, scope_view);
-    Ok(Some(Exp::Variable(ret)))
+    Ok(Some(Exp::variable(ret)))
 }
 
 /// The operand of a cast the C++ grammar spells as a call, or `None` for any other call.
@@ -4798,7 +4781,7 @@ fn free_operator_call<'a>(
             args,
         },
     ));
-    Ok(Some(Exp::Variable(ret)))
+    Ok(Some(Exp::variable(ret)))
 }
 
 /// The method name of the subscript operator, `a[i]`.
@@ -4908,7 +4891,7 @@ fn cpp_operator_assign<'a>(
         scope_view,
         &mut program[scope_view.fidx].locals,
     );
-    target.fields.push(PathSegment::symbol(&member));
+    target.push(PathSegment::field(&member));
     ctx.add_assign_to_program(program, scope_view, &target, &rhs, None);
     Ok(Some(rhs))
 }
@@ -4976,7 +4959,8 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
 /// Parse the C++ source in `source` into a CTADL IR program.
 ///
 /// Signature-identical to [`super::parse_c_program`]: returns the lowered [`Program`],
-/// whether tree-sitter reported a syntax error, and the marked-up IR dump.
+/// whether tree-sitter reported a syntax error, and the marked-up IR dump. Like
+/// [`super::parse_c_program`], it verifies the program, since no store saves it.
 pub fn parse_cpp_program(source: &str) -> anyhow::Result<(Program, bool, String), Error> {
     let units = [TranslationUnit::new(None, source.to_string())];
     let lowered = lower_units(
@@ -4987,5 +4971,6 @@ pub fn parse_cpp_program(source: &str) -> anyhow::Result<(Program, bool, String)
         false,
         true,
     )?;
+    lowered.program.verify()?;
     Ok((lowered.program, lowered.has_error, lowered.marked_up))
 }

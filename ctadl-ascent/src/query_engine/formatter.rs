@@ -42,12 +42,17 @@ use serde_sarif::sarif::{
     Address, ArtifactLocation, CodeFlow, ConfigurationOverride, Invocation, Location,
     LogicalLocation, Message, MultiformatMessageString, Notification, PhysicalLocation,
     PropertyBag, Region, ReportingConfiguration, ReportingDescriptor, ReportingDescriptorReference,
-    Result as SarifResult, ResultKind, ResultLevel, Run, Sarif, ThreadFlow, ThreadFlowLocation,
-    Tool, ToolComponent,
+    Result as SarifResult, ResultKind, ResultLevel, Run, ThreadFlow, ThreadFlowLocation, Tool,
 };
 use source_info::FileSpanId;
 use source_info::{LineMap, offset_to_line_column};
 use std::collections::{BTreeMap, BTreeSet};
+
+pub use ctadl_import::sarif::utc_timestamp;
+use ctadl_import::sarif::{
+    notification, notification_descriptor, notification_descriptor_multi,
+    notification_with_message_id,
+};
 
 use crate::error::{Error, ErrorContext};
 use crate::facts::schema;
@@ -178,7 +183,8 @@ const ABSORBING_FUNCTION_RULE_DESCRIPTION: &str = "An external function that rec
 // `invocation.toolConfigurationNotifications` / `toolExecutionNotifications`). The
 // `CTADL00xx` block describes how the query was *configured*; the `CTADL01xx` block
 // describes what running it *did*. See `notification_descriptors` for the message
-// strings, and `build_invocation` for the conditions.
+// strings, and `build_invocation` for the conditions. Ids from `CTADL0104` on belong to the
+// index's notifications (`ctadl_import::notifications`).
 const NOTIF_NO_ENDPOINTS: &str = "CTADL0001.no-endpoints-configured";
 const NOTIF_NO_SOURCES_CONFIGURED: &str = "CTADL0002.no-sources-configured";
 const NOTIF_NO_SINKS_CONFIGURED: &str = "CTADL0003.no-sinks-configured";
@@ -221,6 +227,8 @@ pub struct QueryDiagnostics {
     pub arguments: Vec<String>,
     /// SARIF-format UTC timestamp; see [`utc_timestamp`].
     pub start_time_utc: String,
+    /// The index's `notifications.sarif`, copied into the run as they are.
+    pub index_notifications: ctadl_import::notifications::Notifications,
     /// Set only when the project had no index and the run checked the model files against the
     /// imported programs instead. See [`ModelCheck`], and `cli::query` for when that happens.
     pub model_check: Option<ModelCheck>,
@@ -250,7 +258,7 @@ pub struct ModelCheck {
     pub matched: Vec<GeneratorMatch>,
     /// Generators declaring an index-time construct that matched nothing.
     pub index_time_dead: Vec<IndexTimeDead>,
-    /// A bridge whose sides cannot be paired, as `models::matches::diagnose` describes it.
+    /// A bridge that paired nothing in the checked imports.
     pub bridges: Vec<BridgeDiagnosis>,
 }
 
@@ -268,7 +276,7 @@ pub struct ModelFileError {
 pub struct ScopeExcluded {
     pub file: path::PathBuf,
     pub index: usize,
-    /// The `in` clause as the file spells it, when there is one.
+    /// The scope, as the attribute tests a rule would write: `language = "dex"`.
     pub scope: Option<String>,
 }
 
@@ -280,9 +288,7 @@ pub struct GeneratorMatch {
     /// The generator's `find`, which says what unit `total` counts: functions, or the callees
     /// of call sites.
     pub find: Option<String>,
-    /// `None` for a generator no `where` narrowed: it matches every function in the import,
-    /// a count that exists only relative to that import and must never be reported as zero.
-    pub total: Option<usize>,
+    pub total: usize,
     /// A few of the matched names, for a reader checking that the `where` selected what was
     /// meant.
     pub sample: Vec<String>,
@@ -297,14 +303,11 @@ pub struct IndexTimeDead {
     pub kind: String,
 }
 
-/// One bridge's verdict, carried verbatim from `models::matches::diagnose`.
+/// One bridge's verdict.
 #[derive(Debug, Clone)]
 pub struct BridgeDiagnosis {
     pub file: path::PathBuf,
     pub index: usize,
-    /// The spec's own `on-unmatched`/`on-ambiguous` setting, which is what decides whether this
-    /// is an error or a warning -- exactly as it does at index time.
-    pub error: bool,
     pub message: String,
 }
 
@@ -379,7 +382,7 @@ fn build_invocation(
                 "The project has no index, so no taint analysis ran. The model files were \
                  matched against the imported program(s) instead -- {described} -- and the \
                  notifications below report what they select. These are model-matching results \
-                 only: call-site fan-out, 'Argument(*)' expansion and sink wildcard expansion \
+                 only: call-site fan-out, 'arg(_)' expansion and sink wildcard expansion \
                  need the index, a matched name can still be absent from it, and bridge pairs \
                  are not counted. Run `ctadl index` for a real query."
             ),
@@ -545,9 +548,8 @@ fn build_invocation(
                     "warning",
                     vec![index.to_string(), file.clone(), scope.clone()],
                     format!(
-                        "Model generator {index} in '{file}' has an 'in' scope ({scope}) that \
-                         admits none of the programs checked, so it was never evaluated against \
-                         any of them."
+                        "Model rule {index} in '{file}' is scoped to {scope}, which admits none \
+                         of the programs checked, so it was never evaluated against any of them."
                     ),
                     BTreeMap::from([
                         ("generatorIndex".to_string(), serde_json::json!(index)),
@@ -571,9 +573,9 @@ fn build_invocation(
                     "warning",
                     vec![index.to_string(), file.clone(), kind.clone()],
                     format!(
-                        "Model generator {index} in '{file}' declares a {kind}, but no function \
-                         in the program matched its 'where' constraints, so it will contribute \
-                         nothing when the project is indexed."
+                        "Model rule {index} in '{file}' declares a {kind}, but its body matched \
+                         no function in the program, so it will contribute nothing when the \
+                         project is indexed."
                     ),
                     BTreeMap::from([
                         ("generatorIndex".to_string(), serde_json::json!(index)),
@@ -585,22 +587,21 @@ fn build_invocation(
             ));
         }
 
-        // CTADL0010: `diagnose`'s verdict, verbatim, at the severity the spec itself set --
-        // the same text and the same severity `ctadl index` would raise. No pair count: pairing
-        // needs the fact base.
+        // CTADL0010: a bridge that paired nothing, as a warning. No pair count: pairing needs
+        // the fact base.
         for bridge in &check.bridges {
             let file = bridge.file.display().to_string();
             config_notifications.push(at_file(
                 notification(
                     NOTIF_BRIDGE_DIAGNOSIS,
-                    if bridge.error { "error" } else { "warning" },
+                    "warning",
                     vec![
                         bridge.index.to_string(),
                         file.clone(),
                         bridge.message.clone(),
                     ],
                     format!(
-                        "Model generator {} in '{file}': {}",
+                        "Model rule {} in '{file}': {}",
                         bridge.index, bridge.message
                     ),
                     BTreeMap::from([(
@@ -627,20 +628,13 @@ fn build_invocation(
             } else {
                 format!(" (e.g. {})", matched.sample.join(", "))
             };
-            // "all functions" rather than a number: an unnarrowed generator's count exists only
-            // relative to one import, and printing it as a number invites subtracting it.
-            let count = match matched.total {
-                Some(total) => format!("{total} {unit}(s)"),
-                None => format!("every {unit} in the program(s) checked"),
-            };
-            let mut properties = BTreeMap::from([
+            let count = format!("{} {unit}(s)", matched.total);
+            let properties = BTreeMap::from([
                 ("generatorIndex".to_string(), serde_json::json!(index)),
                 ("unit".to_string(), serde_json::json!(unit)),
                 ("sample".to_string(), serde_json::json!(matched.sample)),
+                ("matched".to_string(), serde_json::json!(matched.total)),
             ]);
-            if let Some(total) = matched.total {
-                properties.insert("matched".to_string(), serde_json::json!(total));
-            }
             config_notifications.push(at_file(
                 notification(
                     NOTIF_GENERATOR_MATCHED,
@@ -651,7 +645,7 @@ fn build_invocation(
                         count.clone(),
                         sample.clone(),
                     ],
-                    format!("Model generator {index} in '{file}' matched {count}{sample}."),
+                    format!("Model rule {index} in '{file}' matched {count}{sample}."),
                     properties,
                 ),
                 &matched.file,
@@ -845,6 +839,14 @@ fn build_invocation(
         ));
     }
 
+    exec_notifications.extend(
+        diagnostics
+            .index_notifications
+            .notifications()
+            .iter()
+            .cloned(),
+    );
+
     // §3.20.22 / §3.20.21: an error-level notification in either array means the run failed.
     let is_error = |n: &Notification| n.level.as_ref().and_then(|l| l.as_str()) == Some("error");
     let execution_successful =
@@ -1026,13 +1028,6 @@ fn directory_uri(dir: &path::Path) -> String {
         })
 }
 
-/// A UTC timestamp in the `date-time` form SARIF requires (§3.9).
-pub fn utc_timestamp() -> String {
-    chrono::Utc::now()
-        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-        .to_string()
-}
-
 /// Whether `profile` runs the source → sink path search that produces `C0001` results.
 /// This is the same condition the graph construction and the path-result loop use.
 fn profile_finds_paths(profile: SarifProfile) -> bool {
@@ -1064,113 +1059,13 @@ fn disabled_rules(profile: SarifProfile) -> Vec<&'static str> {
     out
 }
 
-/// Build a notification carrying `message.id` + `arguments` (so consumers can read it
-/// structurally rather than by parsing prose) plus a `properties` bag of raw counts.
-fn notification(
-    descriptor_id: &str,
-    level: &str,
-    arguments: Vec<String>,
-    text: String,
-    properties: BTreeMap<String, serde_json::Value>,
-) -> Notification {
-    notification_with_message_id(descriptor_id, "default", level, arguments, text, properties)
-}
-
-/// [`notification`] for a descriptor that declares more than one message string. `message_id`
-/// selects which (§3.11.7) and must be a key of the descriptor's `messageStrings`, otherwise
-/// a consumer re-rendering the message from `arguments` has nothing to render.
-fn notification_with_message_id(
-    descriptor_id: &str,
-    message_id: &str,
-    level: &str,
-    arguments: Vec<String>,
-    text: String,
-    properties: BTreeMap<String, serde_json::Value>,
-) -> Notification {
-    let mut notif = Notification::builder()
-        .descriptor(
-            ReportingDescriptorReference::builder()
-                .id(descriptor_id.to_string())
-                .build(),
-        )
-        // `level` is `Option<serde_json::Value>` in serde-sarif (unlike `ResultLevel`), so
-        // the enum value goes in as a JSON string.
-        .level(serde_json::json!(level))
-        .message(
-            // Both forms: `text` for a human reading the file, `id` + `arguments` so a
-            // consumer can read the condition without parsing prose.
-            Message::builder()
-                .id(message_id.to_string())
-                .arguments(arguments)
-                .text(text)
-                .build(),
-        )
-        .build();
-    // Set after building: the generated builder is type-state, so an optional field cannot
-    // be assigned conditionally.
-    if !properties.is_empty() {
-        notif.properties = Some(
-            PropertyBag::builder()
-                .additional_properties(properties)
-                .build(),
-        );
-    }
-    notif
-}
-
-/// Declare a notification descriptor with a single `default` message string. The `{n}`
-/// placeholders are filled from each notification's `message.arguments`.
-fn notification_descriptor(
-    id: &str,
-    name: &str,
-    description: &str,
-    message: &str,
-) -> ReportingDescriptor {
-    notification_descriptor_multi(id, name, description, &[("default", message)])
-}
-
-/// [`notification_descriptor`] for a notification whose prose depends on which of several
-/// conditions fired, one `messageStrings` entry per condition (§3.49.11). The entry a given
-/// notification selects is its `message.id`; `default` is the one used when the condition is
-/// not known more precisely.
-fn notification_descriptor_multi(
-    id: &str,
-    name: &str,
-    description: &str,
-    messages: &[(&str, &str)],
-) -> ReportingDescriptor {
-    ReportingDescriptor::builder()
-        .id(id.to_string())
-        .name(name.to_string())
-        .short_description(
-            MultiformatMessageString::builder()
-                .text(description.to_string())
-                .build(),
-        )
-        .message_strings(
-            messages
-                .iter()
-                .map(|(key, text)| {
-                    (
-                        (*key).to_string(),
-                        MultiformatMessageString::builder()
-                            .text((*text).to_string())
-                            .build(),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>(),
-        )
-        .build()
-}
-
 /// The `message.id`s [`unmatched_message`] can select on `CTADL0004`, one per way a declared
 /// port can produce no endpoint. Also the notification's `properties.reason`, so a consumer
 /// can branch on the cause without parsing prose.
 const DEAD_UNKNOWN: &str = "default";
 const DEAD_NO_FUNCTION: &str = "noFunctionMatched";
 const DEAD_LOCAL_NOT_FOUND: &str = "localNotFound";
-const DEAD_NO_CALLER: &str = "noCallerMatched";
-const DEAD_PORT_REJECTED: &str = "portRejected";
+const DEAD_GLOBAL_NOT_FOUND: &str = "globalNotFound";
 const DEAD_MIXED: &str = "mixedReasons";
 /// The one condition that is not about a source/sink port at all: a `propagation` that matched
 /// no function. Its own id because what it contributes nothing to is the *index*, not the query.
@@ -1186,7 +1081,7 @@ struct UnmatchedMessage {
     message_id: &'static str,
     arguments: Vec<String>,
     text: String,
-    /// The `Variable(name)` the port named, when that is what failed to resolve.
+    /// The local a `local(L)` port asked for, when that is what failed to resolve.
     variable: Option<String>,
 }
 
@@ -1214,9 +1109,8 @@ fn unmatched_message(
             message_id: DEAD_NO_FUNCTION,
             arguments: head,
             text: format!(
-                "Model generator {index} in '{file}' declares a {direction}, but no function in \
-                 the program matched its 'where' constraints, so it contributes nothing to the \
-                 query."
+                "Model rule {index} in '{file}' declares a {direction}, but its body matched no \
+                 function in the program, so it contributes nothing to the query."
             ),
             variable: None,
         },
@@ -1229,35 +1123,24 @@ fn unmatched_message(
                 a
             },
             text: format!(
-                "Model generator {index} in '{file}' declares a {direction} on port \
-                 'Variable({name})': its 'where' constraints matched {functions} function(s), but \
-                 none of them has a local variable named '{name}', so it contributes nothing to \
-                 the query."
+                "Model rule {index} in '{file}' declares a {direction} on a local: its body \
+                 matched {functions} function(s), but none of them has a local '{name}', so it \
+                 contributes nothing to the query."
             ),
             variable: Some(name.clone()),
         },
-        (Some(UnmatchedReason::NoCallerMatched), None) => UnmatchedMessage {
-            message_id: DEAD_NO_CALLER,
+        (Some(UnmatchedReason::GlobalNotFound(name)), None) => UnmatchedMessage {
+            message_id: DEAD_GLOBAL_NOT_FOUND,
             arguments: {
                 let mut a = head;
-                a.push(functions.to_string());
+                a.push(name.clone());
                 a
             },
             text: format!(
-                "Model generator {index} in '{file}' declares a {direction} at call sites: its \
-                 'where' constraints matched {functions} function(s), but no caller of them \
-                 satisfied its 'in_function' constraint, so it contributes nothing to the query."
+                "Model rule {index} in '{file}' declares a {direction} on a global, but no \
+                 import declares a global '{name}', so it contributes nothing to the query."
             ),
-            variable: None,
-        },
-        (Some(UnmatchedReason::PortRejected), None) => UnmatchedMessage {
-            message_id: DEAD_PORT_REJECTED,
-            arguments: head,
-            text: format!(
-                "Model generator {index} in '{file}' declares a {direction} on a port that is not \
-                 valid for its 'find' method, so it contributes nothing to the query."
-            ),
-            variable: None,
+            variable: Some(name.clone()),
         },
         (Some(_), Some(_)) => {
             let joined = stats
@@ -1275,7 +1158,7 @@ fn unmatched_message(
                     a
                 },
                 text: format!(
-                    "Model generator {index} in '{file}' declares {} {direction} port(s), none of \
+                    "Model rule {index} in '{file}' declares {} {direction} port(s), none of \
                      which matched anything in the program ({joined}), so it contributes nothing \
                      to the query.",
                     stats.ports_declared
@@ -1289,8 +1172,8 @@ fn unmatched_message(
             message_id: DEAD_UNKNOWN,
             arguments: head,
             text: format!(
-                "Model generator {index} in '{file}' declares a {direction} that matched nothing \
-                 in the program, so it contributes nothing to the query."
+                "Model rule {index} in '{file}' declares a {direction} that matched nothing in \
+                 the program, so it contributes nothing to the query."
             ),
             variable: None,
         },
@@ -1300,16 +1183,11 @@ fn unmatched_message(
 /// One clause of the `mixedReasons` list.
 fn unmatched_reason_phrase(reason: &UnmatchedReason) -> String {
     match reason {
-        UnmatchedReason::NoFunctionMatched => {
-            "no function matched its 'where' constraints".to_string()
-        }
+        UnmatchedReason::NoFunctionMatched => "its body matched no function".to_string(),
         UnmatchedReason::LocalNotFound(name) => {
-            format!("no matched function has a local named '{name}'")
+            format!("no matched function has a local '{name}'")
         }
-        UnmatchedReason::NoCallerMatched => {
-            "no caller satisfied its 'in_function' constraint".to_string()
-        }
-        UnmatchedReason::PortRejected => "a port is not valid for its 'find' method".to_string(),
+        UnmatchedReason::GlobalNotFound(name) => format!("no import declares a global '{name}'"),
     }
 }
 
@@ -1340,48 +1218,41 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
         ),
         notification_descriptor_multi(
             NOTIF_GENERATOR_DEAD,
-            "Model generator matched nothing",
-            "A model generator declared a port that produced no endpoint",
-            // One message per cause; see `unmatched_message`. `{0}` = generator index,
+            "Model rule matched nothing",
+            "A model rule declared a port that produced no endpoint",
+            // One message per cause; see `unmatched_message`. `{0}` = rule index,
             // `{1}` = model file, `{2}` = direction throughout.
             &[
                 (
                     DEAD_UNKNOWN,
-                    "Model generator {0} in '{1}' declares a {2} that matched nothing in the \
-                     program, so it contributes nothing to the query.",
+                    "Model rule {0} in '{1}' declares a {2} that matched nothing in the program, \
+                     so it contributes nothing to the query.",
                 ),
                 (
                     DEAD_NO_FUNCTION,
-                    "Model generator {0} in '{1}' declares a {2}, but no function in the program \
-                     matched its 'where' constraints, so it contributes nothing to the query.",
+                    "Model rule {0} in '{1}' declares a {2}, but its body matched no function in \
+                     the program, so it contributes nothing to the query.",
                 ),
                 (
                     DEAD_LOCAL_NOT_FOUND,
-                    "Model generator {0} in '{1}' declares a {2} on port 'Variable({3})': its \
-                     'where' constraints matched {4} function(s), but none of them has a local \
-                     variable named '{3}', so it contributes nothing to the query.",
+                    "Model rule {0} in '{1}' declares a {2} on a local: its body matched {4} \
+                     function(s), but none of them has a local '{3}', so it contributes nothing \
+                     to the query.",
                 ),
                 (
-                    DEAD_NO_CALLER,
-                    "Model generator {0} in '{1}' declares a {2} at call sites: its 'where' \
-                     constraints matched {3} function(s), but no caller of them satisfied its \
-                     'in_function' constraint, so it contributes nothing to the query.",
-                ),
-                (
-                    DEAD_PORT_REJECTED,
-                    "Model generator {0} in '{1}' declares a {2} on a port that is not valid for \
-                     its 'find' method, so it contributes nothing to the query.",
+                    DEAD_GLOBAL_NOT_FOUND,
+                    "Model rule {0} in '{1}' declares a {2} on a global, but no import declares \
+                     a global '{3}', so it contributes nothing to the query.",
                 ),
                 (
                     DEAD_MIXED,
-                    "Model generator {0} in '{1}' declares {3} {2} port(s), none of which matched \
+                    "Model rule {0} in '{1}' declares {3} {2} port(s), none of which matched \
                      anything in the program ({4}), so it contributes nothing to the query.",
                 ),
                 (
                     DEAD_INDEX_TIME,
-                    "Model generator {0} in '{1}' declares a {2}, but no function in the program \
-                     matched its 'where' constraints, so it will contribute nothing when the \
-                     project is indexed.",
+                    "Model rule {0} in '{1}' declares a {2}, but its body matched no function in \
+                     the program, so it will contribute nothing when the project is indexed.",
                 ),
             ],
         ),
@@ -1413,33 +1284,33 @@ fn notification_descriptors() -> Vec<ReportingDescriptor> {
             "The project has no index, so no taint analysis ran. The model files were matched \
              against the imported program(s) instead -- {0} -- and the notifications below \
              report what they select. These are model-matching results only: call-site fan-out, \
-             'Argument(*)' expansion and sink wildcard expansion need the index, a matched name \
+             'arg(_)' expansion and sink wildcard expansion need the index, a matched name \
              can still be absent from it, and bridge pairs are not counted. Run `ctadl index` \
              for a real query.",
         ),
         notification_descriptor(
             NOTIF_SCOPE_EXCLUDED,
-            "Model generator out of scope",
-            "A generator's 'in' clause admits none of the programs checked",
-            "Model generator {0} in '{1}' has an 'in' scope ({2}) that admits none of the \
-             programs checked, so it was never evaluated against any of them.",
+            "Model rule out of scope",
+            "A rule's language or import scope admits none of the programs checked",
+            "Model rule {0} in '{1}' is scoped to {2}, which admits none of the programs checked, \
+             so it was never evaluated against any of them.",
         ),
         notification_descriptor(
             NOTIF_BRIDGE_DIAGNOSIS,
             "Bridge model cannot be paired",
-            "A bridge's sides matched nothing, or matched ambiguously",
-            "Model generator {0} in '{1}': {2}",
+            "A bridge paired no functions in the programs checked",
+            "Model rule {0} in '{1}': {2}",
         ),
         notification_descriptor(
             NOTIF_GENERATOR_MATCHED,
-            "Model generator matched",
-            "What a generator's 'where' constraints selected",
-            "Model generator {0} in '{1}' matched {2}{3}.",
+            "Model rule matched",
+            "What a rule's body selected",
+            "Model rule {0} in '{1}' matched {2}{3}.",
         ),
         notification_descriptor(
             NOTIF_MODEL_FILE_ERROR,
             "Model file error",
-            "A model file could not be read, or a generator in it is malformed",
+            "A model file could not be read, or a rule in it is malformed",
             "Model file '{0}': {1}",
         ),
         notification_descriptor_multi(
@@ -1516,7 +1387,7 @@ pub struct FormatFacts {
 }
 
 pub struct TaintedInstructions {
-    // (site id, label, variable, access path)
+    // (site id, label, variable, path)
     pub tainted_insn: Vec<(PackedInsnSiteId, Label, FlowVariable, Path)>,
 }
 
@@ -1549,7 +1420,7 @@ impl FormatFactsBuilder {
             facts
                 .into_iter()
                 .map(|(id, i, vx)| {
-                    let FlowVertex(var, path) = vx;
+                    let FlowVertex(var, path, ..) = vx;
                     (id, i, var, path)
                 })
                 .collect(),
@@ -1641,14 +1512,16 @@ impl Annotation<LabeledTaintGraph> for TaintState {
                 TaintState::Free => Some(TaintState::Free),
                 TaintState::Restricted => None,
             },
+            FlowEdge::Global => Some(TaintState::Free),
         }
     }
 }
 
 /// A node in the taint dataflow graph: a function-local vertex (a variable
-/// together with its access path). The node carries no taint state — call/return matching is enforced by the [`TaintState`] annotation the
-/// realizable-path search threads along the [`FlowEdge`] labels, not by splitting
-/// a vertex into per-state copies.
+/// together with its path: an access path). The node carries no taint state —
+/// call/return matching is enforced by the [`TaintState`] annotation the
+/// realizable-path search threads along the [`FlowEdge`] labels, not by
+/// splitting a vertex into per-state copies.
 pub type FlowNode = (FunctionId, FlowVariable, Path);
 
 /// The taint dataflow graph the formatter walks to emit path (code-flow)
@@ -1769,17 +1642,18 @@ pub fn find_endpoint_paths(
     // The source/sink endpoints actually present on tainted nodes -- the same
     // endpoint set the SARIF formatter draws on. Forward endpoints are sources,
     // backward endpoints are sinks.
-    let mut sources: BTreeSet<&QueryEndpoint> = BTreeSet::new();
-    let mut sinks: BTreeSet<&QueryEndpoint> = BTreeSet::new();
+    let mut sources: Vec<&QueryEndpoint> = Vec::new();
+    let mut sinks: Vec<&QueryEndpoint> = Vec::new();
     for (_, _, _, _, ep) in &facts.taint {
         match ep.direction {
-            TaintDirection::Forward => {
-                sources.insert(ep);
-            }
-            TaintDirection::Backward => {
-                sinks.insert(ep);
-            }
+            TaintDirection::Forward => sources.push(ep),
+            TaintDirection::Backward => sinks.push(ep),
         }
+    }
+    // In content order, the order of the paths returned.
+    for eps in [&mut sources, &mut sinks] {
+        eps.sort_unstable_by(|a, b| a.content_cmp(b));
+        eps.dedup();
     }
 
     let mut paths = Vec::new();
@@ -1921,6 +1795,7 @@ pub fn format_model_check_sarif(
         results,
         SarifData::default(),
         Vec::new(),
+        &diagnostics.index_notifications,
     );
     write_sarif(&sarif, profile, output)?;
     Ok(execution_successful)
@@ -2010,6 +1885,13 @@ async fn async_format_sarif(
             }
         }
     }
+    // In content order, since the pairing in `format_source_info_results` walks them in this order.
+    for details in details_by_span.values_mut() {
+        details.sort_by(|a, b| {
+            a.0.content_cmp(&b.0)
+                .then_with(|| crate::graphviz::index_vertex_cmp(&(a.1, a.2, a.3), &(b.1, b.2, b.3)))
+        });
+    }
     let mut sarif_data = SarifData::default();
     let index_dir = project.index_path()?;
     let imports = load_import_sources(&index_dir)?;
@@ -2053,7 +1935,14 @@ async fn async_format_sarif(
     let execution_successful = invocation.execution_successful;
 
     Ok((
-        sarif_document(project, invocation, results, sarif_data, parquet_dirs),
+        sarif_document(
+            project,
+            invocation,
+            results,
+            sarif_data,
+            parquet_dirs,
+            &diagnostics.index_notifications,
+        ),
         execution_successful,
     ))
 }
@@ -2062,132 +1951,120 @@ async fn async_format_sarif(
 /// `CTADL01xx` notification descriptors declared once (§3.19.24) so that every `message.id` a
 /// notification selects resolves.
 fn ctadl_tool() -> Tool {
-    const CTADL_FULL_DESCRIPTION: &str = "CTADL (Compositional Taint Analysis in Datalog).";
-    Tool::builder()
-        .driver(
-            ToolComponent::builder()
-                .name("ctadl")
-                .version("2026.1")
-                .information_uri("https://github.com/sandialabs/ctadl-rs")
-                .full_description(
-                    MultiformatMessageString::builder()
-                        .text(CTADL_FULL_DESCRIPTION)
-                        .build(),
-                )
-                .rules(vec![
-                    ReportingDescriptor::builder()
-                        .id(TAINTED_PATH_RULE_ID)
-                        .name(TAINTED_PATH_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(TAINTED_PATH_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This is a tainted source-sink path.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(TAINTED_INSTRUCTION_RULE_ID)
-                        .name(TAINTED_INSTRUCTION_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(TAINTED_INSTRUCTION_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This instruction manipulates tainted data.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(TAINT_SOURCE_RULE_ID)
-                        .name(TAINT_SOURCE_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(TAINT_SOURCE_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This is a source of tainted data.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(TAINT_SINK_RULE_ID)
-                        .name(TAINT_SINK_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(TAINT_SINK_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This is an desired sink of tainted data.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(TAINTED_DATA_RULE_ID)
-                        .name(TAINTED_DATA_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(TAINTED_DATA_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This vertex is tainted.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(ALMOST_PATH_FUNCTION_RULE_ID)
-                        .name(ALMOST_PATH_FUNCTION_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(ALMOST_PATH_FUNCTION_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This function contains source and sink taint.")
-                                .build(),
-                        )]))
-                        .build(),
-                    ReportingDescriptor::builder()
-                        .id(ABSORBING_FUNCTION_RULE_ID)
-                        .name(ABSORBING_FUNCTION_RULE_NAME)
-                        .short_description(
-                            MultiformatMessageString::builder()
-                                .text(ABSORBING_FUNCTION_RULE_DESCRIPTION)
-                                .build(),
-                        )
-                        .message_strings(BTreeMap::from([(
-                            "default".to_string(),
-                            MultiformatMessageString::builder()
-                                .text("This external function receives tainted data.")
-                                .build(),
-                        )]))
-                        .build(),
-                ])
-                .notifications(notification_descriptors())
-                .build(),
-        )
-        .build()
+    let mut driver = ctadl_import::sarif::driver();
+    driver.rules = Some(vec![
+        ReportingDescriptor::builder()
+            .id(TAINTED_PATH_RULE_ID)
+            .name(TAINTED_PATH_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(TAINTED_PATH_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This is a tainted source-sink path.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(TAINTED_INSTRUCTION_RULE_ID)
+            .name(TAINTED_INSTRUCTION_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(TAINTED_INSTRUCTION_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This instruction manipulates tainted data.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(TAINT_SOURCE_RULE_ID)
+            .name(TAINT_SOURCE_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(TAINT_SOURCE_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This is a source of tainted data.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(TAINT_SINK_RULE_ID)
+            .name(TAINT_SINK_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(TAINT_SINK_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This is an desired sink of tainted data.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(TAINTED_DATA_RULE_ID)
+            .name(TAINTED_DATA_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(TAINTED_DATA_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This vertex is tainted.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(ALMOST_PATH_FUNCTION_RULE_ID)
+            .name(ALMOST_PATH_FUNCTION_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(ALMOST_PATH_FUNCTION_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This function contains source and sink taint.")
+                    .build(),
+            )]))
+            .build(),
+        ReportingDescriptor::builder()
+            .id(ABSORBING_FUNCTION_RULE_ID)
+            .name(ABSORBING_FUNCTION_RULE_NAME)
+            .short_description(
+                MultiformatMessageString::builder()
+                    .text(ABSORBING_FUNCTION_RULE_DESCRIPTION)
+                    .build(),
+            )
+            .message_strings(BTreeMap::from([(
+                "default".to_string(),
+                MultiformatMessageString::builder()
+                    .text("This external function receives tainted data.")
+                    .build(),
+            )]))
+            .build(),
+    ]);
+    driver.notifications = Some(notification_descriptors());
+    Tool::builder().driver(driver).build()
 }
 
-/// Assembles the run, and the document around it, out of what a run produced.
+/// Assembles the run, and the document around it, out of what a run produced. The tool declares
+/// `index_notifications`' descriptors beside its own.
 ///
 /// Shared by the indexed path and the model-check one so that the two files differ only in what
 /// they *say* -- same tool, same key order, same shape.
@@ -2197,8 +2074,15 @@ fn sarif_document(
     results: Vec<SarifResult>,
     sarif_data: SarifData,
     parquet_dirs: Vec<String>,
+    index_notifications: &ctadl_import::notifications::Notifications,
 ) -> serde_json::Value {
-    let tool = ctadl_tool();
+    let mut tool = ctadl_tool();
+    let declared = tool.driver.notifications.get_or_insert_with(Vec::new);
+    for descriptor in index_notifications.descriptors() {
+        if !declared.iter().any(|d| d.id == descriptor.id) {
+            declared.push(descriptor.clone());
+        }
+    }
 
     // `parquet_dir` names the source-info tables the locations above came out of. A project has
     // one such directory per import, so `parquet_dirs` carries them all and `parquet_dir` keeps
@@ -2247,59 +2131,7 @@ fn sarif_document(
     if !original_uri_base_ids.is_empty() {
         run.original_uri_base_ids = Some(original_uri_base_ids);
     }
-    // we need to deconstruct and rebuild the run to ensure a certain order (needs serde_json feature preserve_order)
-    let final_run = match serde_json::to_value(&run).unwrap() {
-        serde_json::Value::Object(mut old_map) => {
-            let mut new_map = serde_json::Map::new();
-            new_map.insert("tool".to_string(), old_map.remove("tool").unwrap());
-            // `invocations` right after `tool`: it is the run's status, and pinning it here
-            // keeps diffs between runs stable.
-            new_map.insert(
-                "invocations".to_string(),
-                old_map.remove("invocations").unwrap(),
-            );
-            // the order of the rest doesn't matter
-            for (k, v) in old_map {
-                new_map.insert(k, v);
-            }
-            serde_json::Value::Object(new_map)
-        }
-        _ => panic!("Failed to extract serde_json sarif run"),
-    };
-
-    // the runs have to be inserted manually since the order would not be preserved if inserted as a runs object
-    let sarif = Sarif::builder()
-        .version("2.1.0")
-        .properties(properties)
-        .build();
-    // rebuild sarif to preserve order
-    match serde_json::to_value(&sarif).unwrap() {
-        serde_json::Value::Object(mut old_map) => {
-            // remove the default (empty array) in the old map
-            old_map.remove("runs");
-            let mut new_map = serde_json::Map::new();
-            new_map.insert("version".to_string(), old_map.remove("version").unwrap());
-            new_map.insert(
-                "properties".to_string(),
-                old_map.remove("properties").unwrap(),
-            );
-            new_map.insert(
-                "$schema".to_string(),
-                serde_json::json!("https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/schemata/sarif-schema-2.1.0.json"),
-            );
-            // the order of the rest doesn't matter
-            for (k, v) in old_map {
-                new_map.insert(k, v);
-            }
-            // runs should be last
-            new_map.insert(
-                "runs".to_string(),
-                serde_json::Value::Array(vec![final_run]),
-            );
-            serde_json::Value::Object(new_map)
-        }
-        _ => panic!("Failed to extract serde_json sarif map"),
-    }
+    ctadl_import::sarif::document(Some(properties), &run)
 }
 
 /// Resolves every needed span to a SARIF [`Location`], each against the source-info database of
@@ -2343,30 +2175,7 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
     let index_dir = ctx.index_dir.as_ref();
     let ctx_session = SessionContext::new();
 
-    register_parquet_checked(
-        &ctx_session,
-        "file_spans",
-        object_store_path(&dir.join("file_spans.parquet")),
-    )
-    .await?;
-    register_parquet_checked(
-        &ctx_session,
-        "spans",
-        object_store_path(&dir.join("spans.parquet")),
-    )
-    .await?;
-    register_parquet_checked(
-        &ctx_session,
-        "files",
-        object_store_path(&dir.join("files.parquet")),
-    )
-    .await?;
-    register_parquet_checked(
-        &ctx_session,
-        "artifacts",
-        object_store_path(&dir.join("artifacts.parquet")),
-    )
-    .await?;
+    register_source_info_tables(&ctx_session, dir).await?;
     register_parquet_checked(
         &ctx_session,
         "function_id",
@@ -2470,83 +2279,30 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
             let encoding = source_info::ArtifactEncoding::from_u8(encoding_arr.value(i));
             let start = starts.value(i);
             let len_tag = len_tags.value(i);
-            let len_value = if len_tags.value(i) == 1 {
-                len_values.value(i)
-            } else {
-                0
-            };
+            let len_value = len_values.value(i);
 
-            let region = match encoding {
-                source_info::ArtifactEncoding::Binary => {
-                    let builder = Region::builder().byte_offset(start);
-                    if matches!(profile, SarifProfile::Machine) {
-                        builder.build()
-                    } else {
-                        builder.byte_length(len_value).build()
-                    }
-                }
-                source_info::ArtifactEncoding::Utf8 | source_info::ArtifactEncoding::Utf16 => {
-                    let file = File::open(canonical_path)
-                        .err_context(|| format!("opening source file: {canonical_path}"))?;
-                    // SAFETY: This is inherently unsafe because of mmap(). *shrug*
-                    let contents = unsafe {
-                        MmapOptions::new()
-                            .map(&file)
-                            .err_context(|| format!("mapping source file: {canonical_path}"))?
-                    };
-                    let line_map = LineMap::from_bytes(&contents);
-                    let end_byte = match len_tag {
-                        0 => start,
-                        1 => start + len_value,
-                        2 => contents[start as usize..]
-                            .iter()
-                            .position(|&b| b == b'\n')
-                            .map(|p| start + p as u32 + 1)
-                            .unwrap_or(contents.len() as u32),
-                        _ => start,
-                    };
-                    let start_lc = offset_to_line_column(&line_map, start);
-                    let end_lc =
-                        offset_to_line_column(&line_map, end_byte.saturating_sub(1).max(start));
-                    Region::builder()
-                        .start_line(start_lc.line as i64)
-                        .start_column((start_lc.column + 1) as i64)
-                        .end_line(end_lc.line as i64)
-                        .end_column((end_lc.column + 1) as i64)
-                        .build()
-                }
-            };
-
-            let artifact_location =
-                source_artifact_location(import, canonical_path, &mut sarif_data.uri_bases);
-
-            let is_pcode = import.language == ArtifactLanguage::Pcode;
-            let physical_location = match encoding {
-                source_info::ArtifactEncoding::Binary if is_pcode => {
-                    // `start` is the absolute instruction address (it includes
-                    // the disassembler's image base). Emit the section-relative
-                    // offset too so consumers (e.g. addr2line in the regression
-                    // suite) need not assume a particular base. When the base is
-                    // unknown, the relative offset degenerates to the absolute.
-                    let address = Address::builder()
-                        .absolute_address(start as i64)
-                        .relative_address(start as i64 - import.image_base.unwrap_or(0))
-                        .kind("instruction")
-                        .build();
-                    PhysicalLocation::builder()
-                        .artifact_location(artifact_location)
-                        .address(address)
-                        .build()
-                }
-                _ => PhysicalLocation::builder()
-                    .artifact_location(artifact_location)
-                    .region(region)
-                    .build(),
-            };
+            let physical_location = span_physical_location(
+                import,
+                profile,
+                &mut sarif_data.uri_bases,
+                RawSpan {
+                    canonical_path,
+                    encoding,
+                    start,
+                    len_tag,
+                    len_value,
+                },
+                "instruction",
+            )?;
 
             let fully_qualified_name = match encoding {
                 source_info::ArtifactEncoding::Binary => {
-                    format!("{}@{:08x}:{:08x}", func_name, start, start)
+                    let address = if import.language == ArtifactLanguage::Pcode {
+                        pcode_absolute_address(import, start)
+                    } else {
+                        i64::from(start)
+                    };
+                    format!("{func_name}@{address:08x}:{address:08x}")
                 }
                 _ => func_name.to_string(),
             };
@@ -2583,6 +2339,199 @@ async fn populate_import_source_info<P: AsRef<path::Path>>(
         }
     }
     Ok(())
+}
+
+/// Registers `dir`'s source-info tables in `session` as `file_spans`, `spans`, `files` and
+/// `artifacts`.
+async fn register_source_info_tables(
+    session: &SessionContext,
+    dir: &path::Path,
+) -> Result<(), Error> {
+    for table in ["file_spans", "spans", "files", "artifacts"] {
+        register_parquet_checked(
+            session,
+            table,
+            object_store_path(&dir.join(format!("{table}.parquet"))),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Where each global is declared: the declaration span of every row of `globals` that has one,
+/// resolved against the source-info database of the import the row names. A global no
+/// front end gave a span has no entry.
+async fn global_declarations<P: AsRef<path::Path>>(
+    ctx: &ProjectContext<'_, P>,
+    profile: SarifProfile,
+    sarif_data: &mut SarifData,
+    globals: &[schema::globals::Record],
+) -> Result<BTreeMap<crate::facts::GlobalId, Vec<PhysicalLocation>>, Error> {
+    let mut declarations: BTreeMap<crate::facts::GlobalId, Vec<PhysicalLocation>> = BTreeMap::new();
+    for import in ctx.imports {
+        let mut by_span: BTreeMap<u32, Vec<crate::facts::GlobalId>> = BTreeMap::new();
+        for (g, i, span) in globals {
+            if *i == import.id
+                && let Some(span) = span
+            {
+                by_span.entry(span.0).or_default().push(*g);
+            }
+        }
+        if by_span.is_empty() {
+            continue;
+        }
+        let session = SessionContext::new();
+        register_source_info_tables(&session, import.source_info_dir.as_path()).await?;
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "file_span_id",
+            DataType::UInt32,
+            false,
+        )]));
+        let ids: UInt32Array = by_span.keys().copied().collect();
+        let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(ids)])?;
+        session.register_table(
+            "global_span",
+            Arc::new(MemTable::try_new(schema, vec![vec![batch]])?),
+        )?;
+        let sql = "
+            SELECT g.file_span_id, art.canonical_path, art.encoding, s.start, s.len_tag,
+                   s.len_value
+            FROM global_span g
+            JOIN file_spans fs ON fs.file_span_id = g.file_span_id
+            JOIN spans s   ON fs.span_id    = s.span_id
+            JOIN files f   ON fs.file_id    = f.file_id
+            JOIN artifacts art ON f.artifact_id = art.artifact_id
+            ORDER BY g.file_span_id
+        ";
+        for batch in session.sql(sql).await?.collect().await? {
+            let column = |i: usize| batch.column(i).as_any();
+            let file_span_ids = column(0).downcast_ref::<UInt32Array>().unwrap();
+            let canonical_paths = column(1).downcast_ref::<StringViewArray>().unwrap();
+            let encodings = column(2).downcast_ref::<UInt8Array>().unwrap();
+            let starts = column(3).downcast_ref::<UInt32Array>().unwrap();
+            let len_tags = column(4).downcast_ref::<UInt8Array>().unwrap();
+            let len_values = column(5).downcast_ref::<UInt32Array>().unwrap();
+            for row in 0..batch.num_rows() {
+                let location = span_physical_location(
+                    import,
+                    profile,
+                    &mut sarif_data.uri_bases,
+                    RawSpan {
+                        canonical_path: canonical_paths.value(row),
+                        encoding: source_info::ArtifactEncoding::from_u8(encodings.value(row)),
+                        start: starts.value(row),
+                        len_tag: len_tags.value(row),
+                        len_value: len_values.value(row),
+                    },
+                    "data",
+                )?;
+                for g in &by_span[&file_span_ids.value(row)] {
+                    declarations.entry(*g).or_default().push(location.clone());
+                }
+            }
+        }
+    }
+    Ok(declarations)
+}
+
+/// The absolute address of a pcode span's `start`, an offset from the image base (see "Spans" in
+/// `ctadl_pcode`).
+fn pcode_absolute_address(import: &ImportSource, start: u32) -> i64 {
+    import.image_base.unwrap_or(0) + i64::from(start)
+}
+
+/// A span as `spans.parquet` and `artifacts.parquet` store it, joined.
+struct RawSpan<'a> {
+    canonical_path: &'a str,
+    encoding: source_info::ArtifactEncoding,
+    start: u32,
+    /// `spans.len_tag`: 0 a caret, 1 `len_value` bytes, 2 to the end of the line.
+    len_tag: u8,
+    /// `spans.len_value`, meaningful only when `len_tag` is 1.
+    len_value: u32,
+}
+
+/// Where `span`, a span of `import`'s source-info database, is: a byte region of a binary
+/// artifact, an address for a pcode one (`address_kind` is the SARIF address kind), or lines and
+/// columns of a text one, which is read to find them.
+fn span_physical_location(
+    import: &ImportSource,
+    profile: SarifProfile,
+    uri_bases: &mut BTreeMap<String, String>,
+    span: RawSpan<'_>,
+    address_kind: &str,
+) -> Result<PhysicalLocation, Error> {
+    let RawSpan {
+        canonical_path,
+        encoding,
+        start,
+        len_tag,
+        len_value,
+    } = span;
+    let len_value = if len_tag == 1 { len_value } else { 0 };
+    let region = match encoding {
+        source_info::ArtifactEncoding::Binary => {
+            let builder = Region::builder().byte_offset(start);
+            if matches!(profile, SarifProfile::Machine) {
+                builder.build()
+            } else {
+                builder.byte_length(len_value).build()
+            }
+        }
+        source_info::ArtifactEncoding::Utf8 | source_info::ArtifactEncoding::Utf16 => {
+            let file = File::open(canonical_path)
+                .err_context(|| format!("opening source file: {canonical_path}"))?;
+            // SAFETY: This is inherently unsafe because of mmap(). *shrug*
+            let contents = unsafe {
+                MmapOptions::new()
+                    .map(&file)
+                    .err_context(|| format!("mapping source file: {canonical_path}"))?
+            };
+            let line_map = LineMap::from_bytes(&contents);
+            let end_byte = match len_tag {
+                0 => start,
+                1 => start + len_value,
+                2 => contents[start as usize..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .map(|p| start + p as u32 + 1)
+                    .unwrap_or(contents.len() as u32),
+                _ => start,
+            };
+            let start_lc = offset_to_line_column(&line_map, start);
+            let end_lc = offset_to_line_column(&line_map, end_byte.saturating_sub(1).max(start));
+            Region::builder()
+                .start_line(start_lc.line as i64)
+                .start_column((start_lc.column + 1) as i64)
+                .end_line(end_lc.line as i64)
+                .end_column((end_lc.column + 1) as i64)
+                .build()
+        }
+    };
+
+    let artifact_location = source_artifact_location(import, canonical_path, uri_bases);
+
+    Ok(match encoding {
+        source_info::ArtifactEncoding::Binary if import.language == ArtifactLanguage::Pcode => {
+            // `start` is the offset from the disassembler's image base (see "Spans" in
+            // `ctadl_pcode`), which is the section-relative address consumers such as addr2line
+            // in the regression suite read; the base added back is the absolute address. When
+            // the base is unknown, the two are the same.
+            let address = Address::builder()
+                .absolute_address(pcode_absolute_address(import, start))
+                .relative_address(i64::from(start))
+                .kind(address_kind)
+                .build();
+            PhysicalLocation::builder()
+                .artifact_location(artifact_location)
+                .address(address)
+                .build()
+        }
+        _ => PhysicalLocation::builder()
+            .artifact_location(artifact_location)
+            .region(region)
+            .build(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2631,24 +2580,30 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             .or_default()
             .push(src.clone());
     }
-    // All unique endpoints
-    let endpoints: BTreeSet<_> = node_to_endpoint.values().flat_map(|v| v.iter()).collect();
-
-    // Map each node to an instruction for location info
-    let mut site_by_var: BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)> =
-        BTreeMap::new();
-    for (site, _, v, _) in &ctx.facts.actual_param {
-        let site_unpacked = InsnSiteId::unpack(site).unwrap();
-        site_by_var
-            .entry((site_unpacked.func_id, *v))
-            .or_insert((site_unpacked.func_id, site_unpacked.insn_id));
+    // A node's endpoints in content order, since the pairing below walks them in this order.
+    for eps in node_to_endpoint.values_mut() {
+        eps.sort_by(|a, b| a.content_cmp(b));
     }
+    // All unique endpoints, in content order: the order of their results.
+    let mut endpoints: Vec<&QueryEndpoint> =
+        node_to_endpoint.values().flat_map(|v| v.iter()).collect();
+    endpoints.sort_unstable_by(|a, b| a.content_cmp(b));
+    endpoints.dedup();
 
     // 1. Find all paths
     let has_sinks = node_to_endpoint.iter().any(|(_, ends)| {
         ends.iter()
             .any(|src| src.direction == crate::facts::TaintDirection::Backward)
     });
+
+    // A sink on a global is anchored at no instruction, so no tainted instruction's
+    // details name it; every source an instruction's details name is paired with it too, and
+    // the path is reported at that instruction.
+    let global_sinks: Vec<&QueryEndpoint> = endpoints
+        .iter()
+        .copied()
+        .filter(|e| e.direction == crate::facts::TaintDirection::Backward && e.vertex.0.is_global())
+        .collect();
 
     let mut results_by_path: BTreeMap<
         Vec<u32>,
@@ -2673,7 +2628,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     .iter()
                     .partition(|s| s.direction == crate::facts::TaintDirection::Forward);
 
-                for sink in &bwd_sinks {
+                for sink in bwd_sinks.iter().chain(&global_sinks) {
                     let end_vertex = (sink.infunc, sink.vertex.0, sink.vertex.1);
                     // Nodes are bare vertices, so a sink resolves to one node.
                     let Some(&target_id) = node_to_id.get(&end_vertex) else {
@@ -2768,6 +2723,14 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             }
         }
     }
+    // Every source and sink result is located at its call, on a path or not.
+    for ep in &endpoints {
+        if let Some(site) = call_arg_site(&(ep.infunc, ep.vertex.0, ep.vertex.1))
+            && seen_sites.insert((site.func_id.id, site.insn_id.id))
+        {
+            path_sites.insert((site.func_id, site.insn_id));
+        }
+    }
 
     if !path_sites.is_empty() {
         let tainted = TaintedInstructions {
@@ -2806,15 +2769,16 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         span_to_location.insert(*span_key, location.clone());
     }
 
-    let mut code_flows_by_span: BTreeMap<SpanKey, Vec<CodeFlow>> = BTreeMap::new();
-    for (path, (span_key, details)) in &results_by_path {
+    // Each path's own code flow. A path is reported as one result, so it carries only its
+    // flow, not those of other paths reported at the same span.
+    let mut code_flow_by_path: BTreeMap<&Vec<u32>, CodeFlow> = BTreeMap::new();
+    for (path, (_span_key, details)) in &results_by_path {
         let mut thread_flow_locations = Vec::new();
         // The previous step's location identity, and its instruction.
         let mut last_loc_id: Option<(String, Option<String>)> = None;
         let mut last_site: Option<(u32, u64)> = None;
         // Monotonic step counter for the whole flow, surfaced as SARIF `executionOrder`
-        // so a viewer/`jq` can order steps unambiguously across the (possibly several)
-        // code flows a result carries.
+        // so a viewer/`jq` can order steps unambiguously.
         let mut exec_order: i64 = 0;
         // Resolve a function id to its (possibly obfuscated) fully-qualified name so a
         // step reads as `... in LX/09h;->A02(...)` rather than a bare vertex token.
@@ -2830,7 +2794,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         // only against a step at the same instruction: a source-level location can be a
         // whole statement (a CIL sequence point), so in `Sink(F(Source()))` every call has
         // the one location, and deduping by it alone would drop the sink step. `message`
-        // describes the step (the full vertex — variable *and* access path — its function,
+        // describes the step (the full vertex — variable *and* path — its function,
         // and the edge kind); `kinds` are the
         // SARIF well-known step categories (`call`/`return`/`taint`); `exec_order` is
         // bumped so every emitted step carries its temporal order.
@@ -3044,7 +3008,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         }
 
         if !thread_flow_locations.is_empty() {
-            code_flows_by_span.entry(*span_key).or_default().push(
+            code_flow_by_path.insert(
+                path,
                 CodeFlow::builder()
                     .thread_flows(vec![
                         ThreadFlow::builder()
@@ -3140,15 +3105,39 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         results.extend(results_by_span.into_values());
     }
 
+    // Each global's declaring imports, for naming a source or sink on one. An index
+    // without the table (a test fixture) names a global by itself.
+    let globals = schema::globals::try_load(ctx.index_dir.as_ref()).unwrap_or_default();
+    let mut global_programs: BTreeMap<crate::facts::GlobalId, Vec<String>> = BTreeMap::new();
+    for (g, import, _) in &globals {
+        let programs = global_programs.entry(*g).or_default();
+        let name = import_name(ctx.imports, *import);
+        if !programs.contains(&name) {
+            programs.push(name);
+        }
+    }
+    // Only the globals a source or sink is on are located, so a project of many imports, each
+    // declaring globals, reads no source-info table for a query with no endpoint on a global.
+    let endpoint_globals: BTreeSet<crate::facts::GlobalId> = endpoints
+        .iter()
+        .filter_map(|ep| ep.vertex.0.as_global())
+        .collect();
+    let located: Vec<_> = globals
+        .iter()
+        .filter(|(g, _, _)| endpoint_globals.contains(g))
+        .cloned()
+        .collect();
+    let global_declarations = global_declarations(ctx, profile, sarif_data, &located).await?;
     // Which sources and sinks actually matched is part of what the run *did*, so it is
     // reported in every profile rather than only where the extra detail was wanted. These
     // stay `kind: "informational"` / `level: "none"`: they are context, not findings.
     results.extend(format_source_sink_results(
         sarif_data,
         &endpoints,
+        &global_programs,
+        &global_declarations,
         &source_data.id_to_name,
         &call_callee,
-        &site_by_var,
         &source_data.all_locations,
     ));
 
@@ -3163,7 +3152,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     // Now build results for paths (for Human, Debug, or Agent profiles, one per path)
     let mut path_stats = PathStats::default();
     if profile_finds_paths(profile) {
-        for (_path, (span_key, details)) in results_by_path {
+        for (path, (span_key, details)) in &results_by_path {
+            let span_key = *span_key;
             let location = if let Some(loc) = span_to_location.get(&span_key) {
                 loc.clone()
             } else {
@@ -3175,7 +3165,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
 
             let mut labels_set = BTreeSet::new();
 
-            for (src, _sink, _) in &details {
+            for (src, _sink, _) in details {
                 labels_set.insert(src.label.to_string());
             }
 
@@ -3214,7 +3204,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             // carries the source *kind*; this adds the source/sink *function names*.
             let mut source_functions: BTreeSet<String> = BTreeSet::new();
             let mut sink_functions: BTreeSet<String> = BTreeSet::new();
-            for (src, sink_opt, _lbl) in &details {
+            for (src, sink_opt, _lbl) in details {
                 if let Some(name) = source_data
                     .id_to_name
                     .get(&endpoint_callee(src, &call_callee).id)
@@ -3257,7 +3247,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                 .additional_properties(additional_properties)
                 .build();
 
-            if let Some(code_flows) = code_flows_by_span.get(&span_key) {
+            if let Some(code_flow) = code_flow_by_path.get(path) {
                 let result = SarifResult::builder()
                     .rule_id(TAINTED_PATH_RULE_ID.to_string())
                     // A reported taint path is a finding, not a note: `kind: "fail"` puts
@@ -3269,7 +3259,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     .message(Message::builder().text(final_msg_text).build())
                     .locations(vec![location])
                     .properties(properties)
-                    .code_flows(code_flows.clone())
+                    .code_flows(vec![code_flow.clone()])
                     .build();
 
                 results.push(result);
@@ -3304,10 +3294,11 @@ fn endpoint_callee(
 
 fn format_source_sink_results(
     sarif_data: &mut SarifData,
-    endpoints: &BTreeSet<&QueryEndpoint>,
+    endpoints: &[&QueryEndpoint],
+    global_programs: &BTreeMap<crate::facts::GlobalId, Vec<String>>,
+    global_declarations: &BTreeMap<crate::facts::GlobalId, Vec<PhysicalLocation>>,
     id_to_name: &BTreeMap<u32, String>,
     call_callee: &BTreeMap<PackedInsnSiteId, FunctionId>,
-    site_by_var: &BTreeMap<(FunctionId, FlowVariable), (FunctionId, InsnId)>,
     all_locations: &BTreeMap<(u32, u64), Location>,
 ) -> Vec<SarifResult> {
     let mut source_sink_results = Vec::new();
@@ -3325,7 +3316,7 @@ fn format_source_sink_results(
             } else {
                 TAINT_SINK_RULE_ID
             };
-            // Render the full vertex (variable *and* access path) so distinct
+            // Render the full vertex (variable *and* path) so distinct
             // endpoints on the same variable -- e.g. a model that taints both
             // `Argument(1).deref` and `Argument(1).deref.deref` -- read as the
             // separate sources they are, instead of collapsing to identical
@@ -3335,21 +3326,38 @@ fn format_source_sink_results(
             // Name the source/sink by the framework method it models (the callee
             // at its anchored call site), not the caller `infunc` holds.
             let callee_id = endpoint_callee(endpoint, call_callee);
-            let func_name = id_to_name
-                .get(&callee_id.id)
-                .cloned()
-                .unwrap_or_else(|| "unknown".to_string());
             let label = endpoint.label.0.to_string();
+            // A global is anchored at no function. It is named by a logical location
+            // naming the programs that declare it and the global, `<import>::$name`, and located
+            // at its declaration in each import that recorded one; a global several
+            // imports declare is one variable (G3), named by each.
+            let (owner, fully_qualified_name, kind) = match node.1.as_global() {
+                Some(g) => {
+                    let programs = global_programs
+                        .get(&g)
+                        .map(|p| p.join(", "))
+                        .unwrap_or_default();
+                    let fq = if programs.is_empty() {
+                        g.to_string()
+                    } else {
+                        format!("{programs}::{g}")
+                    };
+                    (format!("global {fq}"), fq, "variable")
+                }
+                None => {
+                    let name = id_to_name
+                        .get(&callee_id.id)
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".to_string());
+                    (format!("function {name}"), name, "member")
+                }
+            };
             let msg_text = if is_source {
-                format!("Source of tainted data: {vertex} in function {func_name} (kind '{label}')")
+                format!("Source of tainted data: {vertex} in {owner} (kind '{label}')")
             } else {
-                format!("Sink of tainted data: {vertex} in function {func_name} (kind '{label}')")
+                format!("Sink of tainted data: {vertex} in {owner} (kind '{label}')")
             };
 
-            let fully_qualified_name = id_to_name
-                .get(&callee_id.id)
-                .cloned()
-                .unwrap_or_else(|| "unknown".to_string());
             let loc_idx = *sarif_data
                 .global_logical_locations_map
                 .entry(fully_qualified_name.clone())
@@ -3357,7 +3365,7 @@ fn format_source_sink_results(
                     let idx = sarif_data.global_logical_locations.len();
                     sarif_data.global_logical_locations.push(
                         LogicalLocation::builder()
-                            .kind("member")
+                            .kind(kind)
                             .name(fully_qualified_name.clone())
                             .fully_qualified_name(fully_qualified_name)
                             .build(),
@@ -3372,9 +3380,21 @@ fn format_source_sink_results(
                     .build(),
             ];
 
-            if let Some(&site) = site_by_var.get(&(node.0, node.1))
-                && let Some(physical_loc) = all_locations.get(&(site.0.id, site.1.id))
+            if let Some(declared) = node.1.as_global().and_then(|g| global_declarations.get(&g)) {
+                locations = declared
+                    .iter()
+                    .map(|physical| {
+                        Location::builder()
+                            .physical_location(physical.clone())
+                            .logical_locations(vec![logical_location.clone()])
+                            .build()
+                    })
+                    .collect();
+            } else if let Some(packed) = node.1.as_call_arg()
+                && let Ok(CallArgId { insn_id, .. }) = CallArgId::try_from(packed)
+                && let Some(physical_loc) = all_locations.get(&(node.0.id, insn_id.id))
             {
+                // A call-arg vertex is at its call, an instruction of the vertex's function.
                 let mut loc_with_phys = physical_loc.clone();
                 loc_with_phys.logical_locations = Some(vec![logical_location]);
                 locations = vec![loc_with_phys];
@@ -3627,6 +3647,65 @@ mod tests {
     use super::*;
     use crate::facts::FormalIndex;
 
+    /// `CTADL0004` speaks Portcullis: a rule, its body, a local. A JSON file reaches the engine
+    /// as its migration, so these are the words for it too.
+    #[test]
+    fn unmatched_messages_name_rules_and_locals() {
+        let stats = |reasons: &[UnmatchedReason], functions| EndpointStats {
+            ports_declared: 1,
+            endpoints_matched: 0,
+            functions_matched: functions,
+            unmatched: reasons.iter().cloned().collect(),
+        };
+        let m = unmatched_message(
+            3,
+            "m.ctadl",
+            "sink",
+            &stats(&[UnmatchedReason::NoFunctionMatched], 0),
+        );
+        assert_eq!(m.message_id, DEAD_NO_FUNCTION);
+        assert_eq!(
+            m.text,
+            "Model rule 3 in 'm.ctadl' declares a sink, but its body matched no function in the \
+             program, so it contributes nothing to the query."
+        );
+        let m = unmatched_message(
+            3,
+            "m.ctadl",
+            "source",
+            &stats(&[UnmatchedReason::LocalNotFound("buf".to_string())], 2),
+        );
+        assert_eq!(m.message_id, DEAD_LOCAL_NOT_FOUND);
+        assert_eq!(m.arguments, ["3", "m.ctadl", "source", "buf", "2"]);
+        assert_eq!(
+            m.text,
+            "Model rule 3 in 'm.ctadl' declares a source on a local: its body matched 2 \
+             function(s), but none of them has a local 'buf', so it contributes nothing to the \
+             query."
+        );
+        assert_eq!(m.variable.as_deref(), Some("buf"));
+        for m in [
+            &m.text,
+            &unmatched_message(
+                0,
+                "m.ctadl",
+                "sink",
+                &stats(
+                    &[
+                        UnmatchedReason::NoFunctionMatched,
+                        UnmatchedReason::LocalNotFound("buf".to_string()),
+                    ],
+                    0,
+                ),
+            )
+            .text,
+        ] {
+            for json in ["generator", "'where'", "Variable("] {
+                assert!(!m.contains(json), "{m}");
+            }
+        }
+    }
+
     #[test]
     fn object_store_path_absolutizes_relative_input() {
         // A relative path must be resolved to an absolute `file://` URL, not left
@@ -3688,7 +3767,7 @@ mod tests {
     ) -> QueryEndpoint {
         QueryEndpoint {
             infunc: FunctionId::new(func),
-            vertex: FlowVertex(var, Path::empty()),
+            vertex: FlowVertex::new(var, Path::empty()),
             label: Label(label.into()),
             direction: dir,
             call_site: None,
@@ -3713,7 +3792,7 @@ mod tests {
         )
     }
 
-    /// A graph vertex `(func, var)` (with the empty access path).
+    /// A graph vertex `(func, var)` (with the empty path).
     fn node(func: u32, var: FlowVariable) -> FlowNode {
         (FunctionId::new(func), var, Path::empty())
     }

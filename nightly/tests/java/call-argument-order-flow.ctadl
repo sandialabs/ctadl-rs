@@ -1,0 +1,6 @@
+source(F::return, kind = "UserInput") :-
+  fun(F, name = "source", parent = "LCallArgumentOrderFlow;");
+
+sink(F::arg(0), kind = "TaintedData") :-
+  fun(F, name = "sink", parent = "LCallArgumentOrderFlow;");
+

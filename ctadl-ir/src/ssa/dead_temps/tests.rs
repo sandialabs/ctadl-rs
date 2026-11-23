@@ -2,11 +2,11 @@ use super::*;
 
 use smallvec::smallvec;
 
-use crate::mir::call::{CallEdges, CallStyle};
+use crate::cir::call::{CallEdges, CallStyle};
 
 thread_local! {
-    static LOCALS: std::cell::RefCell<crate::mir::Locals> =
-        std::cell::RefCell::new(crate::mir::Locals::default());
+    static LOCALS: std::cell::RefCell<crate::cir::Locals> =
+        std::cell::RefCell::new(crate::cir::Locals::default());
 }
 
 /// Interns `name` into a per-thread table so repeated names share one `LocalIdx`.
@@ -19,7 +19,7 @@ fn param(idx: usize) -> VariableRef {
 }
 
 fn read(name: &str) -> Exp {
-    Exp::Variable(local(name))
+    Exp::variable(local(name))
 }
 
 fn assign(dest: VariableRef, sources: Vec<Exp>) -> Statement {
@@ -31,7 +31,7 @@ fn load(dest: &str, source: &str, field: &str) -> Statement {
     Statement::new_kind(StatementKind::load(
         local(dest),
         local(source),
-        FieldRef::symbol(field),
+        PathSegment::field(field),
     ))
 }
 
@@ -113,31 +113,31 @@ fn keeps_temp_read_by_terminator() {
     assert_eq!(block_kinds(&f, 0).len(), 1);
 }
 
-/// A bare variable read expressed as a pathless [`Exp::AccessPath`] rather than
+/// A bare variable read expressed as an offset-less [`Exp::Address`] rather than
 /// an [`Exp::Variable`]. Frontends can emit either for the same read.
-fn read_access_path(name: &str) -> Exp {
-    Exp::AccessPath(AccessPath::without_fields(local(name)))
+fn read_bare_address(name: &str) -> Exp {
+    Exp::Path(AccessPath::from(local(name)))
 }
 
 #[test]
-fn terminator_iter_src_var_yields_access_path_base() {
-    // `return <access-path t>` reads t, even though the operand is an
-    // Exp::AccessPath rather than an Exp::Variable.
+fn terminator_iter_src_var_yields_address_base() {
+    // `return <address t>` reads t, even though the operand is an
+    // Exp::Address rather than an Exp::Variable.
     let term = TerminatorKind::Return {
-        args: smallvec![read_access_path("t")],
+        args: smallvec![read_bare_address("t")],
     };
     let reads: Vec<VariableRef> = term.iter_src_var().cloned().collect();
     assert_eq!(reads, vec![local("t")]);
 }
 
 #[test]
-fn keeps_temp_returned_via_access_path() {
-    // t = y.f; return <access-path t>
-    // The return operand is a pathless Exp::AccessPath, so t is used and its
+fn keeps_temp_returned_via_address() {
+    // t = y.f; return <address t>
+    // The return operand is an offset-less Exp::Address, so t is used and its
     // defining Load must survive.
     let mut f = one_block_function(vec![load("t", "y", "f")]);
     f.blocks[BasicBlockIdx::ZERO].terminator = Some(Terminator::new_kind(TerminatorKind::Return {
-        args: smallvec![read_access_path("t")],
+        args: smallvec![read_bare_address("t")],
     }));
     eliminate_dead_temps_function(&mut f);
     assert_eq!(dests(&f, 0), vec![local("t")]);
@@ -218,10 +218,10 @@ fn call_arg_keeps_feeding_temp_alive() {
 
 #[test]
 fn keeps_store() {
-    // store %global.f := v;   (a Store defines no variable)   =>  never a candidate
+    // store $g.f := v;   (a Store defines no variable)   =>  never a candidate
     let mut f = one_block_function(vec![Statement::new_kind(StatementKind::store(
-        AccessPath::without_fields(VariableRef::new_global()),
-        FieldRef::symbol("f"),
+        AccessPath::from(VariableRef::global(GlobalIdx::new(0))),
+        PathSegment::field("f"),
         read("v"),
     ))]);
     eliminate_dead_temps_function(&mut f);
@@ -240,8 +240,8 @@ fn keeps_unread_non_local_def() {
 fn versioned_locals_are_untouched() {
     // Already-SSA form: t_1 = a_0, t_1 unread. A no-op — the pass runs before SSA.
     let mut f = one_block_function(vec![Statement::new_kind(StatementKind::Assign {
-        dest: local("t").with_version(1),
-        sources: smallvec![Exp::Variable(local("a").with_version(0))],
+        dest: local("t").with_version(1).into(),
+        sources: [Exp::variable(local("a").with_version(0))].into(),
     })]);
     eliminate_dead_temps_function(&mut f);
     assert_eq!(block_kinds(&f, 0).len(), 1);

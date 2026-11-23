@@ -1,0 +1,12 @@
+name = "Portcullis"
+grammar = "portcullis"
+path_suffixes = ["ctadl"]
+line_comments = ["// "]
+block_comment = ["/* ", " */"]
+tab_size = 2
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = false },
+    { start = "(", end = ")", close = true, newline = false },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+]

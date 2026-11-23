@@ -6,7 +6,7 @@
 // call site -- the formals (`src`'s return, `snk`'s `c`) are identical.
 //
 // The SARIF formatter searches for paths by graph traversal over unique
-// `(function, variable, access-path)` vertices. Because the sink endpoint is
+// `(function, variable, path)` vertices. Because the sink endpoint is
 // anchored on `snk`'s formal `c`, both call-site routes land on the single
 // `(snk, c)` vertex and the path search reports ONE path, silently dropping the
 // other. The trailing `2` in `sink(c, S, 2)` asserts the number of distinct

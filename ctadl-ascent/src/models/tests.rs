@@ -1,18 +1,16 @@
-// Tests for what Stage 1 records in an `EndpointMatch`.
+// Tests for what a JSON model file's load records: `EndpointMatch` fields, `modes`, the
+// per-generator counters, and `find: "dispatch"`. Each loads the generators the way a JSON file
+// is loaded, through [`load`].
 use super::*;
 use crate::facts;
 use crate::facts::TaintDirection;
-use crate::models::json::ModelGeneratorIngest;
-use ctadl_ir::mir;
-use ctadl_ir::mir::{PathSegment, ProgramInfo};
+use ctadl_ir::cir;
+use ctadl_ir::cir::{PathSegment, ProgramInfo};
 
 /// A native (binary-frontend) program with one 2-parameter function per name, each carrying a
 /// local called `buf`.
 fn native_program(names: &[&str]) -> ProgramInfo {
-    use ctadl_ir::mir::call::{
-        NativeFunction, NativeQualifiedName, NativeSignature, NativeSimpleName, VirtualMethodTable,
-    };
-    use ctadl_ir::mir::{
+    use ctadl_ir::cir::{
         BasicBlockData, FunctionData, Functions, ParameterType, Program, Statement, StatementKind,
     };
 
@@ -32,32 +30,46 @@ fn native_program(names: &[&str]) -> ProgramInfo {
         .collect();
 
     ProgramInfo {
-        vmt: VirtualMethodTable::Native {
-            methods: names
-                .iter()
-                .map(|name| {
-                    (
-                        NativeSimpleName((*name).into()),
-                        NativeSignature((*name).into()),
-                        NativeFunction((*name).into()),
-                        NativeQualifiedName((*name).into()),
-                    )
-                })
-                .collect(),
-        },
+        vmt: crate::models::test_vmt::native(names.iter().map(|n| (*n, *n, *n, *n))),
         program: Program::new(Functions::new(functions)),
         ..Default::default()
     }
 }
 
-/// Matches `generators` against a program containing `names` and returns what Stage 1 emitted.
+/// Loads `generators` as one JSON model file against `index`, appending what matched to `out`:
+/// migrated and run on the DSL engine.
+fn load(
+    index: &ProgramMatchIndex<'_>,
+    generators: Vec<serde_json::Value>,
+    out: &mut ProgramModelMatches,
+) -> Result<ModelLoadReport, Error> {
+    let file = portcullis::PortcullisFile::from_json_generators("<models>", &generators)?;
+    let set = portcullis::PortcullisModelSet { files: vec![file] };
+    let mut matcher = portcullis::PortcullisMatcher::new(&set, portcullis::Phase::All);
+    matcher.observe_import(index, out);
+    matcher.finish(out).map(ModelLoadReport::from_portcullis)
+}
+
+/// The JSON model errors the migration of a file failed with, under the context it reports them
+/// in.
+fn json_model_errors(e: Error) -> crate::error::JsonModelErrors {
+    match e {
+        Error::JsonModel(errors) => errors,
+        Error::Context { source, .. } => match source.downcast::<Error>() {
+            Ok(inner) => json_model_errors(*inner),
+            Err(source) => panic!("expected a JSON model error, got: {source}"),
+        },
+        e => panic!("expected a JSON model error, got: {e}"),
+    }
+}
+
+/// Loads `generators` against a program containing `names` and returns the endpoints.
 fn endpoints_of(names: &[&str], generators: Vec<serde_json::Value>) -> Vec<EndpointMatch> {
     let program_info = native_program(names);
     let mut out = ProgramModelMatches::default();
     {
         let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
-        ingest.encode_models(generators).expect("encoding models");
+        load(&match_index, generators, &mut out).expect("encoding models");
     }
     out.endpoints
 }
@@ -82,8 +94,8 @@ fn a_function_anchored_port_fills_its_fields() {
             // A `Return` port carries no formal index; Stage 2 supplies `RETURN_INDEX`.
             index: None,
             path: facts::Path::from_accesses([
-                PathSegment::symbol("field1"),
-                PathSegment::symbol("sub"),
+                PathSegment::field("field1"),
+                PathSegment::field("sub"),
             ]),
             label: facts::Str::from("lbl1"),
             direction: TaintDirection::Forward,
@@ -96,7 +108,7 @@ fn a_function_anchored_port_fills_its_fields() {
     );
 }
 
-/// A sink port: the backward direction, a positional index, an empty access path, and the
+/// A sink port: the backward direction, a positional index, an empty path, and the
 /// sink-only `wildcard` (which defaults to `true`) -- the other end of the field matrix from
 /// the test above.
 #[test]
@@ -127,52 +139,29 @@ fn a_wildcard_sink_fills_its_fields() {
     );
 }
 
-/// A `Variable(name)` port carries its base `LocalIdx` in `local_index`, resolved against the
-/// matched function's pre-optimization `locals`. Stage 2 cannot re-derive it -- see
-/// [`EndpointMatch::local_index`] -- so it has to survive here.
-#[test]
-fn a_variable_port_carries_its_local_index() {
-    let endpoints = endpoints_of(
-        &["h"],
-        vec![serde_json::json!({
-            "find": "methods",
-            "where": [{"constraint": "signature_match", "name": "h"}],
-            "model": {"sources": [{"kind": "lbl3", "port": "Variable(buf).headers"}]},
-        })],
-    );
-    assert_eq!(endpoints.len(), 1);
-    assert_eq!(endpoints[0].selector_ty, FormalIndexTypeTag::Local);
-    assert_eq!(endpoints[0].index, None);
-    assert_eq!(endpoints[0].local_index, Some(0));
-    assert_eq!(
-        endpoints[0].path,
-        facts::Path::from_accesses([PathSegment::symbol("headers")])
-    );
-}
-
 /// The two spellings a bracketed segment can have must stay distinguishable, or a port naming
 /// the real `Offset(8)` a binary frontend emits and one naming the synthetic `Symbol("[]")` the
 /// dex/jvm/lua frontends emit collapse into each other.
 #[test]
 fn bracketed_segment_spellings_stay_distinct() {
-    use ctadl_ir::mir::Offset;
+    use ctadl_ir::cir::Offset;
 
     for seg in [
         PathSegment::Offset(Offset(8)),
-        PathSegment::symbol("[8]"),
-        PathSegment::symbol("[]"),
-        PathSegment::symbol("plain"),
+        PathSegment::field("[8]"),
+        PathSegment::field("[]"),
+        PathSegment::field("plain"),
     ] {
-        let spelled = mir::segment_to_string(&seg);
+        let spelled = cir::segment_to_string(&seg);
         assert_eq!(
-            mir::parse_segment(&spelled).expect("re-parses"),
+            cir::parse_segment(&spelled).expect("re-parses"),
             seg,
             "{spelled:?} did not round-trip"
         );
     }
     assert_ne!(
-        mir::segment_to_string(&PathSegment::Offset(Offset(8))),
-        mir::segment_to_string(&PathSegment::symbol("[8]"))
+        cir::segment_to_string(&PathSegment::Offset(Offset(8))),
+        cir::segment_to_string(&PathSegment::field("[8]"))
     );
 }
 
@@ -186,14 +175,13 @@ fn bracketed_segment_spellings_stay_distinct() {
 mod modes {
     use super::*;
 
-    /// Runs `generators` against a native program and returns everything Stage 1 emitted.
+    /// Loads `generators` against a native program and returns everything that matched.
     fn matches_of(names: &[&str], generators: Vec<serde_json::Value>) -> ProgramModelMatches {
         let program_info = native_program(names);
         let mut out = ProgramModelMatches::default();
         {
             let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-            let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
-            ingest.encode_models(generators).expect("encoding models");
+            load(&match_index, generators, &mut out).expect("encoding models");
         }
         out
     }
@@ -240,6 +228,94 @@ mod modes {
         assert!(matches.propagations.is_empty());
     }
 
+    /// A generator's mode directives count once as an index-time construct, however many modes
+    /// it names, and a propagation-only generator counts none.
+    #[test]
+    fn modes_count_as_index_time_models() {
+        let program_info = native_program(&["f", "g"]);
+        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        let mut out = ProgramModelMatches::default();
+        let report = load(
+            &match_index,
+            vec![
+                serde_json::json!({
+                    "find": "methods",
+                    "where": [{"constraint": "signature_match", "name": "f"}],
+                    "model": {"modes": ["skip-analysis", "mem2reg-full"]},
+                }),
+                serde_json::json!({
+                    "find": "methods",
+                    "where": [{"constraint": "signature_match", "name": "g"}],
+                    "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]},
+                }),
+            ],
+            &mut out,
+        )
+        .expect("encoding models");
+        assert_eq!(report.index_time_models.modes, 1);
+        assert_eq!(report.index_time_models.propagations, 1);
+        assert!(
+            report
+                .index_time_models
+                .describe()
+                .contains("analysis-mode")
+        );
+    }
+
+    /// The mem2reg modes go to their own map, and without `skip-analysis` the body stays.
+    #[test]
+    fn mem2reg_modes_record_the_matched_functions() {
+        let generator = |name: &str, mode: &str| {
+            serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature_match", "name": name}],
+                "model": {"modes": [mode]},
+            })
+        };
+        let matches = matches_of(
+            &["f", "g"],
+            vec![
+                generator("f", "mem2reg-full"),
+                generator("g", "mem2reg-window"),
+            ],
+        );
+        assert_eq!(
+            matches.mem2reg_modes,
+            [
+                (facts::Str::from("f"), ctadl_ir::ssa::FullMode::Force),
+                (facts::Str::from("g"), ctadl_ir::ssa::FullMode::Forbid),
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert!(matches.skip_analysis.is_empty());
+    }
+
+    /// The removed frame modes are an error that says why, not an unknown mode.
+    #[test]
+    fn frame_modes_are_rejected() {
+        let program_info = native_program(&["f"]);
+        let mut out = ProgramModelMatches::default();
+        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
+        let err = load(
+            &match_index,
+            vec![serde_json::json!({
+                "find": "methods",
+                "where": [{"constraint": "signature_match", "name": "f"}],
+                "model": {"modes": ["frame-store"]},
+            })],
+            &mut out,
+        )
+        .expect_err("a removed mode is rejected");
+        let errors = json_model_errors(err);
+        assert_eq!(errors.len(), 1);
+        assert!(
+            format!("{}", errors[0]).contains("removed"),
+            "the error should say the mode was removed: {}",
+            errors[0]
+        );
+    }
+
     /// An unknown mode errors. Ignoring it would produce a model file that loads clean and
     /// analyzes the body anyway -- the one failure this directive cannot afford.
     #[test]
@@ -247,17 +323,17 @@ mod modes {
         let program_info = native_program(&["f"]);
         let mut out = ProgramModelMatches::default();
         let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
-        let err = ingest
-            .encode_models(vec![serde_json::json!({
+        let err = load(
+            &match_index,
+            vec![serde_json::json!({
                 "find": "methods",
                 "where": [{"constraint": "signature_match", "name": "f"}],
                 "model": {"modes": ["skip_analysis"]},
-            })])
-            .expect_err("an unknown mode is rejected");
-        let crate::error::Error::JsonModel(errors) = err else {
-            panic!("expected a JSON model error, got: {err}");
-        };
+            })],
+            &mut out,
+        )
+        .expect_err("an unknown mode is rejected");
+        let errors = json_model_errors(err);
         assert_eq!(errors.len(), 1);
         // The message names the defined value, because the reason a mode is misspelled is that
         // the writer did not know how it is spelled.
@@ -270,21 +346,18 @@ mod modes {
     }
 }
 
-/// Tests for the per-generator capture the no-index model check reads.
+/// Tests for the per-generator counters the no-index model check reads.
 ///
-/// The capture is what makes a count trustworthy without an index, so what is pinned here is
-/// exactly the two ways a count can lie: an unnarrowed generator reported as zero, and a
-/// narrowed one disagreeing with the set the matcher actually used.
+/// The counters are what make a count trustworthy without an index, so what is pinned here is
+/// that a count agrees with the set the engine actually anchored at.
 mod capture {
     use super::*;
-    use crate::models::json::MatchedFunctions;
 
-    /// A frontend with no method table -- what C and flowy use. The match index falls back to the
-    /// IR function names, so a `where` still matches; it is only `matched_functions(&All)`
-    /// that has nothing to enumerate.
+    /// A frontend with no method table -- what C and flowy use. `fun` still ranges over the IR
+    /// functions, so a `where` matches.
     fn unknown_vmt_program(names: &[&str]) -> ProgramInfo {
-        use ctadl_ir::mir::call::VirtualMethodTable;
-        use ctadl_ir::mir::{FunctionData, Functions, ParameterType, Program};
+        use ctadl_ir::cir::call::VirtualMethodTable;
+        use ctadl_ir::cir::{FunctionData, Functions, ParameterType, Program};
 
         let functions: Vec<FunctionData> = names
             .iter()
@@ -295,14 +368,15 @@ mod capture {
                 f
             })
             .collect();
+        let program = Program::new(Functions::new(functions));
         ProgramInfo {
-            vmt: VirtualMethodTable::Unknown,
-            program: Program::new(Functions::new(functions)),
+            vmt: VirtualMethodTable::named_by_ir(&program),
+            program,
             ..Default::default()
         }
     }
 
-    /// Runs `generators` against `program_info` with the capture on, keeping every name.
+    /// Loads `generators` against `program_info` and returns the counters.
     fn capture_of(
         program_info: &ProgramInfo,
         generators: Vec<serde_json::Value>,
@@ -312,17 +386,12 @@ mod capture {
     ) {
         let mut out = ProgramModelMatches::default();
         let match_index = ProgramMatchIndex::new(program_info, ImportScope::unknown());
-        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
-        ingest.capture_matches(usize::MAX);
-        ingest.encode_models(generators).expect("encoding models");
-        (
-            std::mem::take(&mut ingest.matched),
-            std::mem::take(&mut ingest.propagation_stats),
-        )
+        let report = load(&match_index, generators, &mut out).expect("encoding models");
+        (report.matched, report.propagation_stats)
     }
 
     #[test]
-    fn a_narrowed_generator_agrees_with_matched_functions() {
+    fn a_narrowed_generator_agrees_with_what_it_matched() {
         let program_info = native_program(&["f", "g"]);
         let (matched, _) = capture_of(
             &program_info,
@@ -333,20 +402,22 @@ mod capture {
             })],
         );
         let captured = matched.get(&0).expect("generator 0 captured");
-        assert_eq!(captured.total(), Some(1));
-        // The same set the matcher fanned its endpoints out over.
+        assert_eq!(captured.total, 1);
+        // The same set the endpoints were anchored at.
         assert_eq!(
-            captured.names().iter().cloned().collect::<Vec<_>>(),
+            captured.names.iter().cloned().collect::<Vec<_>>(),
             vec!["f".to_string()]
         );
     }
 
-    /// A generator with no `where` matches every function, and the capture says so as `All`
-    /// rather than as a number -- including on a frontend where `matched_functions(&All)`
-    /// returns an empty list. Reporting *that* as "matched 0 functions" is the count-that-lies
-    /// the model check exists to prevent.
+    /// A generator with no `where` matches every function, and the count says how many --
+    /// including on a frontend with no method table. Reporting that as "matched 0 functions" is
+    /// the count-that-lies the model check exists to prevent.
+    ///
+    /// The migrated rule's `fun(F)` enumerates every function, so the count is exact
+    /// (`docs/portcullis.md` §9, "Universe").
     #[test]
-    fn a_where_less_generator_captures_all() {
+    fn a_where_less_generator_counts_every_function() {
         for program_info in [
             native_program(&["f", "g"]),
             unknown_vmt_program(&["f", "g"]),
@@ -358,13 +429,11 @@ mod capture {
                     "model": {"sources": [{"kind": "l", "port": "Return"}]},
                 })],
             );
-            assert_eq!(matched.get(&0), Some(&MatchedFunctions::All));
-            assert_eq!(matched[&0].total(), None);
+            assert_eq!(matched[&0].total, 2);
         }
     }
 
-    /// The `Unknown`-VMT case, spelled out: a `where`-narrowed generator on an `Unknown` VMT
-    /// captures a real count even though the `All` arm of `matched_functions` could not.
+    /// A `where`-narrowed generator on an `Unknown` VMT counts what it matched.
     #[test]
     fn a_narrowed_generator_counts_on_an_unknown_vmt() {
         let program_info = unknown_vmt_program(&["f", "g"]);
@@ -376,7 +445,7 @@ mod capture {
                 "model": {"sinks": [{"kind": "l", "port": "Argument(0)"}]},
             })],
         );
-        assert_eq!(matched[&0].total(), Some(1));
+        assert_eq!(matched[&0].total, 1);
     }
 
     /// A propagation's two counts are the ends of one fan-out: two entries declared, and one
@@ -399,57 +468,6 @@ mod capture {
         assert_eq!(stats.ports_declared, 2);
         assert_eq!(stats.rows, 4);
     }
-
-    /// Nothing is recorded unless the caller asked for it: `index` and `query` must pay
-    /// nothing for a capture neither of them reads.
-    #[test]
-    fn capture_is_off_by_default() {
-        let program_info = native_program(&["f"]);
-        let mut out = ProgramModelMatches::default();
-        let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-        let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
-        ingest
-            .encode_models(vec![serde_json::json!({
-                "find": "methods",
-                "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]},
-            })])
-            .expect("encoding models");
-        assert!(ingest.matched.is_empty());
-        assert!(ingest.propagation_stats.is_empty());
-    }
-}
-
-// Tests for UniverseSet set difference (backs the `not` combinator).
-mod universe_set_diff {
-    use crate::models::universe_set::UniverseSet;
-    use std::collections::BTreeSet;
-
-    fn explicit<'a>(items: &[&'a str]) -> UniverseSet<&'a str> {
-        items.iter().copied().collect()
-    }
-
-    fn as_set<'a>(u: &UniverseSet<&'a str>) -> BTreeSet<&'a str> {
-        match u {
-            UniverseSet::Explicit(s) => s.clone(),
-            UniverseSet::All => panic!("expected Explicit, got All"),
-        }
-    }
-
-    #[test]
-    fn difference_removes_members() {
-        // {a,b,c} \ {b} == {a,c}
-        let mut a = explicit(&["a", "b", "c"]);
-        a.difference_with(explicit(&["b"]));
-        assert_eq!(as_set(&a), BTreeSet::from(["a", "c"]));
-    }
-
-    #[test]
-    fn difference_with_all_is_empty() {
-        // {a} \ All == {}
-        let mut a = explicit(&["a"]);
-        a.difference_with(UniverseSet::all());
-        assert!(as_set(&a).is_empty());
-    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -459,11 +477,11 @@ mod universe_set_diff {
 mod dispatch {
     use super::*;
     use crate::models::match_index::DispatchKeys;
-    use ctadl_ir::mir::call::{
-        CallStyle, JavaClass, JavaDispatch, JavaMethod, JavaSignature, JavaSimpleName,
-        VirtualMethodTable,
+    use ctadl_ir::cir::call::{
+        CallStyle, CilMethodRef, JavaClass, JavaDispatch, JavaMethod, JavaMethodRef, JavaSignature,
+        JavaSimpleName, VirtualMethodTable,
     };
-    use ctadl_ir::mir::{
+    use ctadl_ir::cir::{
         BasicBlockData, FunctionData, Functions, Program, Statement, StatementKind, VariableRef,
     };
 
@@ -471,7 +489,7 @@ mod dispatch {
     /// declares `Lcom/example/Impl;->next(...)`, so a `find: methods` generator has something to
     /// match and the dispatch keys can be seen to differ from it.
     fn java_program(sites: &[(&str, &str, &str)]) -> ProgramInfo {
-        use ctadl_ir::mir::builder::FunctionBuilder;
+        use ctadl_ir::cir::builder::FunctionBuilder;
 
         let mut caller = FunctionData {
             name: "Lcom/example/Caller;->run()V".to_string(),
@@ -486,17 +504,20 @@ mod dispatch {
                 b.create_call(
                     CallStyle::JavaCall {
                         receiver: x.clone(),
-                        cls: (*cls).into(),
-                        simple_name: (*name).into(),
-                        descriptor: (*desc).into(),
-                        dispatch: JavaDispatch::Interface,
-                        super_start: None,
+                        method: JavaMethodRef {
+                            cls: (*cls).into(),
+                            simple_name: (*name).into(),
+                            descriptor: (*desc).into(),
+                            dispatch: JavaDispatch::Interface,
+                            super_start: None,
+                        }
+                        .into(),
                     },
                     Vec::new(),
                     Vec::new(),
                 );
             }
-            b.create_ret(Vec::<ctadl_ir::mir::Exp>::new());
+            b.create_ret(Vec::<ctadl_ir::cir::Exp>::new());
         }
         let mut impl_fn = FunctionData::default();
         impl_fn.set_name("Lcom/example/Impl;->next()Ljava/lang/Object;".to_string());
@@ -505,18 +526,20 @@ mod dispatch {
         blocks[entry].extend(vec![Statement::new_kind(StatementKind::Nop)]);
 
         ProgramInfo {
-            vmt: VirtualMethodTable::Java {
-                methods: vec![(
-                    JavaClass("Lcom/example/Impl;".into()),
-                    JavaSimpleName("next".into()),
-                    JavaSignature("()Ljava/lang/Object;".into()),
-                    JavaMethod("Lcom/example/Impl;->next()Ljava/lang/Object;".into()),
-                )],
-                hierarchy: Default::default(),
-                interfaces: vec![JavaClass("Ljava/util/Iterator;".into())],
-                abstract_methods: Vec::new(),
-                natives: Vec::new(),
-            },
+            vmt: crate::models::test_vmt::with_method_names(VirtualMethodTable::new(
+                Dispatch::Java {
+                    methods: vec![(
+                        JavaClass("Lcom/example/Impl;".into()),
+                        JavaSimpleName("next".into()),
+                        JavaSignature("()Ljava/lang/Object;".into()),
+                        JavaMethod("Lcom/example/Impl;->next()Ljava/lang/Object;".into()),
+                    )],
+                    hierarchy: Default::default(),
+                    interfaces: vec![JavaClass("Ljava/util/Iterator;".into())],
+                    abstract_methods: Vec::new(),
+                    natives: Vec::new(),
+                },
+            )),
             program: Program::new(Functions::new(vec![caller, impl_fn])),
             ..Default::default()
         }
@@ -536,8 +559,7 @@ mod dispatch {
                 ImportScope::unknown(),
                 Some(&keys),
             );
-            let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
-            ingest.encode_models(generators)?;
+            load(&match_index, generators, &mut out)?;
         }
         Ok(out)
     }
@@ -547,7 +569,7 @@ mod dispatch {
             &[("Ljava/util/Iterator;", "next", "()Ljava/lang/Object;")],
             generators,
         ) {
-            Err(crate::error::Error::JsonModel(errors)) => errors
+            Err(e) => json_model_errors(e)
                 .iter()
                 .map(|e| e.to_string())
                 .collect::<Vec<_>>()
@@ -567,7 +589,7 @@ mod dispatch {
     const ITERATOR: (&str, &str, &str) = ("Ljava/util/Iterator;", "next", "()Ljava/lang/Object;");
 
     /// The point of the form: half an app's interface sites name a type it never declares, so
-    /// `java.util.Iterator` has no row in the method universe and `find: methods` cannot name
+    /// `java.util.Iterator` has no row in the method table and `find: methods` cannot name
     /// it. The keys of the call sites contain it by construction.
     #[test]
     fn matches_a_type_the_program_never_declares() {
@@ -591,7 +613,7 @@ mod dispatch {
     /// A `callvirt` is keyed the same way, in .NET spellings, and its id is the CIL method id.
     #[test]
     fn matches_a_cil_call_site() {
-        use ctadl_ir::mir::builder::FunctionBuilder;
+        use ctadl_ir::cir::builder::FunctionBuilder;
 
         const CLS: &str = "[System.Private.CoreLib]System.Object";
         const DESC: &str = "()->System.String";
@@ -607,14 +629,17 @@ mod dispatch {
             b.create_call(
                 CallStyle::CilCall {
                     receiver: x,
-                    cls: CLS.into(),
-                    simple_name: "ToString".into(),
-                    descriptor: DESC.into(),
+                    method: CilMethodRef {
+                        cls: CLS.into(),
+                        simple_name: "ToString".into(),
+                        descriptor: DESC.into(),
+                    }
+                    .into(),
                 },
                 Vec::new(),
                 Vec::new(),
             );
-            b.create_ret(Vec::<ctadl_ir::mir::Exp>::new());
+            b.create_ret(Vec::<ctadl_ir::cir::Exp>::new());
         }
         let program_info = ProgramInfo {
             vmt: VirtualMethodTable::new_cil(),
@@ -629,15 +654,17 @@ mod dispatch {
                 ImportScope::unknown(),
                 Some(&keys),
             );
-            let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
-            ingest
-                .encode_models(vec![serde_json::json!({
+            load(
+                &match_index,
+                vec![serde_json::json!({
                     "find": "dispatch",
                     "where": [{"constraint": "signature_match",
                                "qualified-id": format!("{CLS}::ToString{DESC}")}],
                     "model": {"propagation": [{"input": "Argument(0)", "output": "Return"}]},
-                })])
-                .expect("loading");
+                })],
+                &mut out,
+            )
+            .expect("loading");
         }
         let keys: Vec<_> = out
             .dispatch
@@ -850,21 +877,22 @@ mod dispatch {
         );
     }
 
-    /// Without a dispatch universe the generator matches nothing, rather than everything: the
-    /// caller decided not to collect the call sites, and an unnarrowed working set would model
-    /// every signature in the program.
+    /// Without the call sites' signature keys the generator matches nothing, rather than
+    /// everything: the caller decided not to collect them.
     #[test]
     fn no_dispatch_universe_matches_nothing() {
         let program_info = java_program(&[ITERATOR]);
         let mut out = ProgramModelMatches::default();
         {
             let match_index = ProgramMatchIndex::new(&program_info, ImportScope::unknown());
-            let mut ingest = ModelGeneratorIngest::new(&match_index, &mut out);
-            ingest
-                .encode_models(vec![model(serde_json::json!([
+            load(
+                &match_index,
+                vec![model(serde_json::json!([
                     {"input": "Argument(0)", "output": "Return"}
-                ]))])
-                .expect("loading");
+                ]))],
+                &mut out,
+            )
+            .expect("loading");
         }
         assert!(out.dispatch.is_empty());
     }

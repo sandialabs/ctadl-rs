@@ -1,0 +1,25 @@
+// S11: a function reference is a target label, which follows the path rules: a function pointer
+// stored in a struct field in one function resolves a call in another.
+def Id(p): 1 {
+s:
+  return p;
+}
+
+def Store(o) {
+s:
+  o.op = ptr<Id>;
+  return;
+}
+
+def CallThrough() {
+s:
+  Store(o);
+  f = o.op;
+  a = source(S);
+  r = f(a);
+  sink(r, S);
+  return;
+}
+
+// The observable, every sink each label reaches:
+// expect: CallThrough: sink(%S)#0 <- %S

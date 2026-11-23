@@ -3,21 +3,21 @@ use ctadl_import::error::Error;
 
 use crate as tree_sitter_c;
 use anyhow::Result;
-use ctadl_ascent::codegen::{CallResolutionStrategy, GLOBALS_INDEX, RETURN_INDEX, codegen_program};
+use ctadl_ascent::codegen::{CallResolutionStrategy, RETURN_INDEX, codegen_program};
 use ctadl_ascent::index_engine::source_info::IndexSourceInfo;
 use ctadl_ascent::index_engine::{FunctionSummary, IndexFacts, taint_index};
 // `DirectedGraph`/`Successors` are trait imports: they provide `num_nodes()` (used by
 // `check_block_count`) and `successors()` (used by `check_successors`). They look unused but
 // removing them breaks method resolution.
 use ctadl_ascent::facts::Path;
+use ctadl_ir::cir::TerminatorKind;
+use ctadl_ir::cir::call::{CallEdges, CallStyle};
+use ctadl_ir::cir::{GlobalIdx, Globals, LocalIdx, Locals};
 use ctadl_ir::graph::{DirectedGraph, Successors};
-use ctadl_ir::mir::TerminatorKind;
-use ctadl_ir::mir::call::{CallEdges, CallStyle};
-use ctadl_ir::mir::{LocalIdx, Locals, OffsetAccess};
 use ctadl_ir::{
     AccessPath, BasicBlockIdx, Exp, FunctionData, Idx, Statement, StatementKind, VariableRef, ssa,
 };
-use ctadl_ir::{FieldRef, ParameterType, PathSegment, Program, ProgramInfo};
+use ctadl_ir::{ParameterType, PathSegment, Program, ProgramInfo};
 
 pub(crate) fn init_test_logging() {
     let _ = env_logger::builder()
@@ -114,6 +114,14 @@ pub(crate) fn get_only_function(prog: &Program) -> Option<&FunctionData> {
 /* Returns the function named `name`, or None. The C frontend does not overload, so the name
 uniquely identifies a function -- use this (not `get_only_function`) for fixtures with several
 functions. */
+/* The named function's IR dump, with globals printed by name (`$g`), as the program's own dump
+prints them; a function printed on its own names a global by its index. Panics if there is no
+such function. */
+pub(crate) fn render_function(prog: &Program, name: &str) -> String {
+    let fun = function_named(prog, name).unwrap_or_else(|| panic!("no function named {name:?}"));
+    format!("{}", ctadl_ir::cir::WithGlobalNames(prog, fun))
+}
+
 pub(crate) fn function_named<'a>(prog: &'a Program, name: &str) -> Option<&'a FunctionData> {
     prog.functions.functions.raw.iter().find(|f| f.name == name)
 }
@@ -220,7 +228,7 @@ pub(crate) fn check_returns_const(prog: &Program, name: &str, value: &str) {
 
 /* Extracts every direct call (`CallStyle::DirectCall`) in function `name`, as `(callees, args)`
 pairs in source order: `callees` are the resolved callee name(s) on the call edge, `args` the
-argument expressions (access paths / constants). Returns an empty Vec if the function has no direct
+argument expressions (variables, addresses or constants). Returns an empty Vec if the function has no direct
 calls (or doesn't exist). The extraction primitive behind `check_direct_call` / the dex precedent of
 "pull out the narrow thing, then assert on it". */
 pub(crate) fn direct_calls_in(prog: &Program, name: &str) -> Vec<(Vec<String>, Vec<Exp>)> {
@@ -296,7 +304,10 @@ where
     let locals = &function_named(prog, name)
         .expect("expected function to exist")
         .locals;
-    let want_args: Vec<Exp> = args.into_iter().map(|s| exp_from_str(s, locals)).collect();
+    let want_args: Vec<Exp> = args
+        .into_iter()
+        .map(|s| exp_from_str(s, locals, &prog.globals))
+        .collect();
     let calls = direct_calls_in(prog, name);
     let found = calls
         .iter()
@@ -365,25 +376,16 @@ pub(crate) fn check_successors(prog: &Program, block: usize, expected: &[usize])
 }
 
 // A debugging aid for inspecting parsed blocks.
-/// Parses the access-path tail of a DSL string with the one canonical grammar
-/// ([`ctadl_ir::mir::path_syntax`]), so a fixture means exactly what the same text means in a
+/// Parses the path tail of a DSL access-path string with the one canonical grammar
+/// ([`ctadl_ir::cir::path_syntax`]), so a fixture means exactly what the same text means in a
 /// model port, a `.flowy` file, or a fact column.
 ///
 /// Panics on a malformed path — that is a broken fixture, and failing loudly beats the old
 /// behavior of silently dropping empty segments.
 #[track_caller]
-fn parse_fields(s: &str) -> Vec<PathSegment> {
-    ctadl_ir::mir::parse_segments(s)
+fn parse_path(s: &str) -> Vec<PathSegment> {
+    ctadl_ir::cir::parse_segments(s)
         .unwrap_or_else(|e| panic!("malformed access path {s:?} in test DSL: {e}"))
-}
-
-/// A base variable plus a mixed (offset + symbolic-field) path, parsed from the test DSL. Access
-/// paths in the IR are offset-only and load/store fields are single symbols, so the DSL's mixed
-/// paths are held here and composed against the actual `Load`/`Store` statements.
-#[derive(Debug, PartialEq, Eq)]
-struct DslPath {
-    base: VariableRef,
-    fields: Vec<PathSegment>,
 }
 
 /// Resolves a local's DSL name to a `VariableRef` using the same `Locals` table the parser built,
@@ -399,7 +401,7 @@ fn resolve_local(locals: &Locals, name: &str) -> VariableRef {
     VariableRef::new_local_idx(idx)
 }
 
-/// Splits a DSL string at the first `.` into the variable prefix and the access path, *keeping*
+/// Splits a DSL string at the first `.` into the variable prefix and the path, *keeping*
 /// the dot on the path — `"v.f1.f2"` -> `("v", ".f1.f2")`, `"v"` -> `("v", "")`. The path half is
 /// then in the canonical grammar, where every segment carries its leading dot.
 fn split_variable_prefix(s: &str) -> (&str, &str) {
@@ -409,49 +411,50 @@ fn split_variable_prefix(s: &str) -> (&str, &str) {
     }
 }
 
-fn access_path_from_str(s: &str, locals: &Locals) -> DslPath {
-    if let Some(rest) = s.strip_prefix("$globals") {
-        return DslPath {
-            base: VariableRef::new_global(),
-            fields: parse_fields(rest),
-        };
+/// `$name.p` is the global `name` of `globals`, in the canonical grammar
+/// ([`ctadl_ir::cir::path_syntax::parse_global_access_path`]). A name `globals` does not declare
+/// is a global no program has, so a check for it finds nothing.
+pub(crate) fn access_path_from_str(s: &str, locals: &Locals, globals: &Globals) -> AccessPath {
+    if let Some((name, path)) = ctadl_ir::cir::path_syntax::parse_global_access_path(s)
+        .unwrap_or_else(|e| panic!("bad global access path {s:?}: {e}"))
+    {
+        let idx = globals.lookup(&name).unwrap_or(GlobalIdx::new(0xffff_ff00));
+        return AccessPath::new(VariableRef::global(idx), path);
     }
 
     if let Some(rest) = s.strip_prefix("@p") {
         let (n_str, suffix) = split_variable_prefix(rest);
         let n: u32 = n_str.parse().expect("invalid parameter index in @pN");
-        return DslPath {
-            base: VariableRef::new_parameter(n.into()),
-            fields: parse_fields(suffix),
-        };
+        return AccessPath::new(VariableRef::new_parameter(n.into()), parse_path(suffix));
     }
 
     let (base, suffix) = split_variable_prefix(s);
-    DslPath {
-        base: resolve_local(locals, base),
-        fields: parse_fields(suffix),
-    }
+    AccessPath::new(resolve_local(locals, base), parse_path(suffix))
 }
 
 /* Builds a source expression from the DSL. A `#`-prefixed string is a constant literal (`"#7"` =>
 `Exp::Str("7")`, matching how the C frontend lowers a literal — see `flatten_expr` in mod.rs);
-anything else is an access path (variable / param / global / field). */
-pub(crate) fn exp_from_str(s: &str, locals: &Locals) -> Exp {
+`value(p)` is `Exp::Value` of the access path `p`; anything else is an access path (variable /
+param / global / field). */
+pub(crate) fn exp_from_str(s: &str, locals: &Locals, globals: &Globals) -> Exp {
+    if let Some(inner) = s.strip_prefix("value(").and_then(|r| r.strip_suffix(')')) {
+        return Exp::value(access_path_from_str(inner, locals, globals));
+    }
     match s.strip_prefix('#') {
         Some(lit) => Exp::new_str(lit),
         None => {
-            let dsl = access_path_from_str(s, locals);
+            let dsl = access_path_from_str(s, locals, globals);
             assert!(
-                dsl.fields.is_empty(),
-                "DSL source with a field path is not directly expressible; use check_loads: {s}"
+                dsl.is_pathless(),
+                "DSL source with a path is not directly expressible; use check_loads: {s}"
             );
-            Exp::Variable(dsl.base)
+            Exp::variable(dsl.base)
         }
     }
 }
 
 /* Asserts the (single) function contains the given assignment or update (an update is expected when
-`dst` has a field path). If `block_id` is given, only that block is searched. Sources are DSL strings
+`dst` has a non-empty path). If `block_id` is given, only that block is searched. Sources are DSL strings
 (access paths, or `#literal` for a constant). Intended for Programs parsed from a single function.
 Panics at the caller's line if not found. */
 #[track_caller]
@@ -468,43 +471,19 @@ pub(crate) fn check_assign_or_update<I>(
         .locals;
     let srcs: Vec<Exp> = src_strs
         .into_iter()
-        .map(|s| exp_from_str(s, locals))
+        .map(|s| exp_from_str(s, locals, &prog.globals))
         .collect();
 
-    let dst_ap = access_path_from_str(dst, locals);
+    let dst_ap = access_path_from_str(dst, locals, &prog.globals);
 
-    let expected = if dst_ap.fields.is_empty() {
-        StatementKind::assign(dst_ap.base, srcs)
-    } else {
+    if !dst_ap.is_pathless() {
         assert_eq!(
             srcs.len(),
             1,
             "update destination requires exactly one source expression"
         );
-        // A store's destination is an *address* (any number of pointer-arithmetic offsets)
-        // plus the single symbolic field written there, so the DSL path splits the same way:
-        // `f.[4].deref` is the address `f.[4]` and the field `deref`. A destination with more
-        // than one symbol would need intermediate loads and is not a single statement.
-        let mut fields = dst_ap.fields;
-        let Some(PathSegment::Symbol(sym)) = fields.pop() else {
-            panic!("update destination must end in a (symbolic) field: {dst}")
-        };
-        let offsets: Vec<OffsetAccess> = fields
-            .into_iter()
-            .map(|seg| match seg {
-                PathSegment::Offset(off) => OffsetAccess::Offset(off),
-                PathSegment::Symbol(_) => panic!(
-                    "update destination may only have offsets before its field (an interior \
-                     symbol is a load, not part of one store): {dst}"
-                ),
-            })
-            .collect();
-        StatementKind::store(
-            AccessPath::new(dst_ap.base, offsets),
-            FieldRef::new(sym),
-            srcs.into_iter().next().unwrap(),
-        )
-    };
+    }
+    let expected = StatementKind::assign(dst_ap, srcs);
 
     let fun = get_only_function(prog).expect("expected exactly one function");
 
@@ -524,30 +503,21 @@ pub(crate) fn check_assign_or_update<I>(
     );
 }
 
-/* Asserts the (single) function contains a `Load` that reads `source_str` (an access-path DSL
-string like `f.[3].deref` or `$globals.a`). Field reads lower to loads through a temporary, so this is
-the load-based complement to `check_assign_or_update`'s field-path source. Panics if not found. */
+/* Asserts the (single) function contains a load -- a copy into a variable -- that reads
+`source_str` (an access-path DSL string like `f.[3].deref` or `$a.deref`). Field reads lower to
+loads through a temporary, so this is the load-based complement to `check_assign_or_update`.
+Panics if not found. */
 #[track_caller]
 pub(crate) fn check_loads(prog: &Program, source_str: &str) {
     let locals = &get_only_function(prog)
         .expect("expected exactly one function")
         .locals;
-    let ap = access_path_from_str(source_str, locals);
+    let ap = access_path_from_str(source_str, locals, &prog.globals);
     let found = statements_of(prog).any(|s| {
-        let StatementKind::Load { source, field, .. } = &s.kind else {
+        let StatementKind::Assign { dest, sources } = &s.kind else {
             return false;
         };
-        // The full read path is the source's offsets then the loaded symbolic field.
-        let full: Vec<PathSegment> = source
-            .accesses
-            .iter()
-            .cloned()
-            .map(PathSegment::from)
-            .chain(std::iter::once(PathSegment::Symbol(
-                field.symbol_ref().clone(),
-            )))
-            .collect();
-        source.base == ap.base && full == ap.fields
+        dest.is_pathless() && sources.iter().any(|e| e.access_path() == Some(&ap))
     });
     assert!(found, "could not find a load of `{source_str}`\n{prog}");
 }
@@ -562,27 +532,11 @@ pub(crate) fn statements_of(prog: &Program) -> impl Iterator<Item = &Statement> 
 }
 
 /* True if `kind` writes to `dst`, comparing only the destination -- the source(s) are ignored. A
-bare `dst` (no field path) matches an `Assign` to that variable; a `dst` with a field path matches an
-`Update` of that field. This is the same assign-vs-update split as `check_assign_or_update`'s
+bare `dst` (no path) matches an `Assign` to that variable; a `dst` with a path matches a `Store`
+to it. This is the same assign-vs-update split as `check_assign_or_update`'s
 destination, minus the source constraint. */
-fn writes_dest(kind: &StatementKind, dst: &DslPath) -> bool {
-    match kind {
-        StatementKind::Assign { dest, .. } => dst.fields.is_empty() && *dest == dst.base,
-        StatementKind::Store { dest, field, .. } => {
-            // The full written path is the dest's offsets then the (optional) symbolic field.
-            let full: Vec<PathSegment> = dest
-                .accesses
-                .iter()
-                .cloned()
-                .map(PathSegment::from)
-                .chain(std::iter::once(PathSegment::Symbol(
-                    field.symbol_ref().clone(),
-                )))
-                .collect();
-            !dst.fields.is_empty() && dest.base == dst.base && full == dst.fields
-        }
-        _ => false,
-    }
+fn writes_dest(kind: &StatementKind, dst: &AccessPath) -> bool {
+    matches!(kind, StatementKind::Assign { dest, .. } if dest == dst)
 }
 
 /* Counts the statements of the (single) function that write to `dst`, ignoring the source
@@ -591,7 +545,7 @@ pub(crate) fn count_writes_to(prog: &Program, dst: &str) -> usize {
     let locals = &get_only_function(prog)
         .expect("expected exactly one function")
         .locals;
-    let dst_ap = access_path_from_str(dst, locals);
+    let dst_ap = access_path_from_str(dst, locals, &prog.globals);
     statements_of(prog)
         .filter(|s| writes_dest(&s.kind, &dst_ap))
         .count()
@@ -600,7 +554,7 @@ pub(crate) fn count_writes_to(prog: &Program, dst: &str) -> usize {
 /* `count_writes_to` for the function named `name` in a multi-function program. */
 pub(crate) fn count_writes_in(prog: &Program, name: &str, dst: &str) -> usize {
     let fun = function_named(prog, name).unwrap_or_else(|| panic!("no function {name:?}\n{prog}"));
-    let dst_ap = access_path_from_str(dst, &fun.locals);
+    let dst_ap = access_path_from_str(dst, &fun.locals, &prog.globals);
     fun.blocks
         .iter()
         .flat_map(|b| b.statements.iter())
@@ -622,28 +576,37 @@ pub(crate) fn check_writes_to(prog: &Program, dst: &str, count: usize) {
     );
 }
 
-/* Every symbolic field name the program's `Load`/`Store` statements read or write, across ALL
-functions.
+/* Every field name the program's assignments read or write, across ALL functions, and every
+global's name, which the index stores as a string beside the paths (a vertex of its own, written
+`$name` in the path grammar).
 
-The invariant it exists for is [`StatementKind::Load`]'s own -- "the loaded field must be
-non-empty". `facts::Path` serializes an access path as its segments joined by `.` and its parser
+The invariant it exists for is that a field name is non-empty. `facts::Path` serializes an access path as its segments joined by `.` and its parser
 rejects an empty segment, so ONE empty field name anywhere in an import makes the whole index
 unreadable: `ctadl query` panics on the parquet it just wrote, before printing a single result.
 Whole-program rather than one function because only tree-sitter's parse recovery can produce an
 empty name, and an input that provokes the recovery is never a tidy one-function program. */
 pub(crate) fn field_symbols(prog: &Program) -> Vec<&str> {
-    prog.functions
-        .functions
-        .raw
-        .iter()
-        .flat_map(|f| f.blocks.iter())
-        .flat_map(|b| b.statements.iter())
-        .filter_map(|s| match &s.kind {
-            StatementKind::Load { field, .. } | StatementKind::Store { field, .. } => {
-                Some(field.as_str())
-            }
-            _ => None,
-        })
+    let globals = prog.globals.iter_enumerated().map(|(_, g)| &*g.name);
+    globals
+        .chain(
+            prog.functions
+                .functions
+                .raw
+                .iter()
+                .flat_map(|f| f.blocks.iter())
+                .flat_map(|b| b.statements.iter())
+                .flat_map(|s| match &s.kind {
+                    StatementKind::Assign { dest, sources } => std::iter::once(dest)
+                        .chain(sources.iter().filter_map(Exp::access_path))
+                        .flat_map(|ap| ap.segments.iter())
+                        .filter_map(|seg| match seg {
+                            PathSegment::Field(name) => Some(&**name),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                }),
+        )
         .collect()
 }
 
@@ -753,7 +716,7 @@ pub(crate) fn summary_search(
     to_index: i16,
     to_path: &str,
 ) -> bool {
-    // Fixtures are written in the canonical access-path grammar: every segment carries its
+    // Fixtures are written in the canonical path grammar: every segment carries its
     // leading dot (`.f2.f3`), and `""` is the empty path.
     let parse = |s: &str| {
         Path::parse(s).unwrap_or_else(|e| panic!("test access path {s:?} does not parse: {e}"))
@@ -761,9 +724,9 @@ pub(crate) fn summary_search(
     let from_path = parse(from_path);
     let to_path = parse(to_path);
     summary.iter().any(|r| {
-        r.1 == fx::FormalIndex::new(to_index)
+        r.1 == fx::FormalIndex::new(to_index).into()
             && r.2 == to_path
-            && r.3 == fx::FormalIndex::new(from_index)
+            && r.3 == fx::FormalIndex::new(from_index).into()
             && r.4 == from_path
     })
 }
@@ -830,6 +793,18 @@ pub(crate) fn check_returns_param(summary: &[FunctionSummary], param_num: i16, p
     check_flow(summary, param_num, param_path, RETURN_INDEX, "");
 }
 
+/* Asserts the given param reaches the return's value only (`return.#value`), as an operand of
+arithmetic or a comparison does, and not the return itself. */
+#[track_caller]
+pub(crate) fn check_returns_param_value(
+    summary: &[FunctionSummary],
+    param_num: i16,
+    param_path: &str,
+) {
+    check_flow(summary, param_num, param_path, RETURN_INDEX, ".#value");
+    check_no_flow(summary, param_num, param_path, RETURN_INDEX, "");
+}
+
 /* Asserts the given param does NOT reach the return -- the negative complement of
 `check_returns_param` (Flowy's `</-` for a return endpoint). Use it to pin that a value is *not*
 returned, e.g. a block-scoped shadow that must not escape. Prints the actual summary on failure. */
@@ -856,39 +831,17 @@ where
     let locals = &fun.locals;
     let srcs: Vec<Exp> = src_strs
         .into_iter()
-        .map(|s| exp_from_str(s, locals))
+        .map(|s| exp_from_str(s, locals, &prog.globals))
         .collect();
-    let dst_ap = access_path_from_str(dst, locals);
-    let expected = if dst_ap.fields.is_empty() {
-        StatementKind::assign(dst_ap.base, srcs)
-    } else {
+    let dst_ap = access_path_from_str(dst, locals, &prog.globals);
+    if !dst_ap.is_pathless() {
         assert_eq!(
             srcs.len(),
             1,
             "update destination requires exactly one source expression"
         );
-        // Same split as `check_assign_or_update`: the destination is an address (offsets)
-        // plus the single symbolic field written there.
-        let mut fields = dst_ap.fields;
-        let Some(PathSegment::Symbol(sym)) = fields.pop() else {
-            panic!("update destination must end in a (symbolic) field: {dst}")
-        };
-        let offsets: Vec<OffsetAccess> = fields
-            .into_iter()
-            .map(|seg| match seg {
-                PathSegment::Offset(off) => OffsetAccess::Offset(off),
-                PathSegment::Symbol(_) => panic!(
-                    "update destination may only have offsets before its field (an interior \
-                     symbol is a load, not part of one store): {dst}"
-                ),
-            })
-            .collect();
-        StatementKind::store(
-            AccessPath::new(dst_ap.base, offsets),
-            FieldRef::new(sym),
-            srcs.into_iter().next().unwrap(),
-        )
-    };
+    }
+    let expected = StatementKind::assign(dst_ap, srcs);
     let found = fun
         .blocks
         .iter()
@@ -908,26 +861,16 @@ several functions (`Class::m`, `main`, …). Panics at the caller's line if not 
 pub(crate) fn check_func_loads(prog: &Program, name: &str, source_str: &str) {
     let fun =
         function_named(prog, name).unwrap_or_else(|| panic!("no function named {name:?}\n{prog}"));
-    let ap = access_path_from_str(source_str, &fun.locals);
+    let ap = access_path_from_str(source_str, &fun.locals, &prog.globals);
     let found = fun
         .blocks
         .iter()
         .flat_map(|b| b.statements.iter())
         .any(|s| {
-            let StatementKind::Load { source, field, .. } = &s.kind else {
+            let StatementKind::Assign { dest, sources } = &s.kind else {
                 return false;
             };
-            // The full read path is the source's offsets then the loaded symbolic field.
-            let full: Vec<PathSegment> = source
-                .accesses
-                .iter()
-                .cloned()
-                .map(PathSegment::from)
-                .chain(std::iter::once(PathSegment::Symbol(
-                    field.symbol_ref().clone(),
-                )))
-                .collect();
-            source.base == ap.base && full == ap.fields
+            dest.is_pathless() && sources.iter().any(|e| e.access_path() == Some(&ap))
         });
     assert!(
         found,
@@ -943,7 +886,7 @@ line. */
 pub(crate) fn check_func_returns_path(prog: &Program, name: &str, ret: &str) {
     let fun =
         function_named(prog, name).unwrap_or_else(|| panic!("no function named {name:?}\n{prog}"));
-    let want = exp_from_str(ret, &fun.locals);
+    let want = exp_from_str(ret, &fun.locals, &prog.globals);
     let found = fun.blocks.iter().filter_map(|b| b.terminator.as_ref()).any(
         |t| matches!(&t.kind, TerminatorKind::Return { args } if args.as_slice() == [want.clone()]),
     );
@@ -972,7 +915,7 @@ temps that follow. Panics at the caller's line; prints the direct calls found on
 pub(crate) fn check_direct_call_arg0(prog: &Program, caller: &str, callee: &str, arg0: &str) {
     let fun = function_named(prog, caller)
         .unwrap_or_else(|| panic!("no function named {caller:?}\n{prog}"));
-    let want = exp_from_str(arg0, &fun.locals);
+    let want = exp_from_str(arg0, &fun.locals, &prog.globals);
     let calls = direct_calls_in(prog, caller);
     let found = calls
         .iter()
@@ -1000,19 +943,45 @@ fn flow_present_in(
     to_index: i16,
     to_path: &str,
 ) -> bool {
+    flow_present_in_roots(
+        summary,
+        source_info,
+        name,
+        (from_index.into(), from_path.parse().unwrap()),
+        (to_index.into(), to_path.parse().unwrap()),
+    )
+}
+
+/* `flow_present_in` between two roots, formal or global. */
+#[track_caller]
+fn flow_present_in_roots(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    from: (fx::Root, Path),
+    to: (fx::Root, Path),
+) -> bool {
     let func_id = source_info
         .sites
         .get_function_id(fx::Function(fx::Str::from(name)))
         .unwrap_or_else(|| panic!("no function named {name:?} in index summary"));
-    let from_path: Path = from_path.parse().unwrap();
-    let to_path: Path = to_path.parse().unwrap();
-    summary.iter().any(|r| {
-        r.0 == func_id
-            && r.1 == fx::FormalIndex::new(to_index)
-            && r.2 == to_path
-            && r.3 == fx::FormalIndex::new(from_index)
-            && r.4 == from_path
-    })
+    summary
+        .iter()
+        .any(|r| r.0 == func_id && (r.1, r.2) == to && (r.3, r.4) == from)
+}
+
+/* The global and path a test names as `.g.p`: the first segment is the global's name, the rest
+its path, so `.g.deref` is `$g.deref` (escaped like a field: `.count$one\.c.deref`). */
+#[track_caller]
+fn global_path(field: &str) -> (fx::Root, Path) {
+    let p: Path = field.parse().unwrap();
+    let Some(ctadl_ir::cir::PathSegment::Field(name)) = p.head() else {
+        panic!("a global path {field:?} starts with the global's name");
+    };
+    (
+        fx::Root::global(fx::GlobalId(fx::Str::from(name.clone()))),
+        p.tail(),
+    )
 }
 
 /* Asserting per-function flow (presence), the multi-function analogue of `check_flow`. Resolves
@@ -1092,6 +1061,20 @@ pub(crate) fn check_returns_param_in(
     );
 }
 
+/* `check_returns_param_value` for a named function in a multi-function fixture. */
+#[track_caller]
+pub(crate) fn check_returns_param_value_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    param_num: i16,
+    param_path: &str,
+) {
+    let (from, to) = (param_num, RETURN_INDEX);
+    check_flow_in(summary, source_info, name, from, param_path, to, ".#value");
+    check_no_flow_in(summary, source_info, name, from, param_path, to, "");
+}
+
 /* `check_does_not_return_param` for a named function in a multi-function fixture: asserts param
 `param_num` (path `param_path`) does NOT reach the return *of that function*. The per-function
 return-endpoint negative -- use it for non-interference-through-a-call cases. */
@@ -1114,10 +1097,11 @@ pub(crate) fn check_does_not_return_param_in(
     );
 }
 
-/* Asserts function `name` writes parameter `param_num` into the global `field` -- the summary flow
-`@pN -> $globals.field` (e.g. `void set(int src){ g = src; }` summarizes `@p0 -> $globals.g`). The
-global heap is the special `GLOBALS_INDEX` summary endpoint; this hides that constant. Pairs with
-`check_returns_global_in` to pin a cross-function flow-through-a-global as two summary halves. */
+/* Asserts function `name` writes parameter `param_num` into the global path `field` -- the summary
+flow `@pN -> $g.deref` for `field` `.g.deref` (e.g. `void set(int src){ g = src; }` summarizes
+`@p0 -> $g.deref`), a row rooted at the global. Pairs
+with `check_returns_global_in` to pin a cross-function flow-through-a-global as two summary
+halves. */
 #[track_caller]
 pub(crate) fn check_param_into_global_in(
     summary: &[FunctionSummary],
@@ -1126,19 +1110,21 @@ pub(crate) fn check_param_into_global_in(
     param_num: i16,
     field: &str,
 ) {
-    check_flow_in(
-        summary,
-        source_info,
-        name,
-        param_num,
-        "",
-        GLOBALS_INDEX,
-        field,
+    assert!(
+        flow_present_in_roots(
+            summary,
+            source_info,
+            name,
+            (param_num.into(), Path::empty()),
+            global_path(field),
+        ),
+        "expected flow @p{param_num} -> ${} in {name:?}, but it is absent.\nsummary: {summary:#?}",
+        &field[1..],
     );
 }
 
-/* Asserts function `name` returns the global `field` -- the summary flow `$globals.field -> return`
-(e.g. `int get(){ return g; }` summarizes `$globals.g -> return`). The other half of a
+/* Asserts function `name` returns the global path `field` -- the summary flow `$g.deref -> return`
+for `field` `.g.deref` (e.g. `int get(){ return g; }`). The other half of a
 flow-through-a-global; see `check_param_into_global_in`. */
 #[track_caller]
 pub(crate) fn check_returns_global_in(
@@ -1147,14 +1133,61 @@ pub(crate) fn check_returns_global_in(
     name: &str,
     field: &str,
 ) {
-    check_flow_in(
-        summary,
-        source_info,
-        name,
-        GLOBALS_INDEX,
-        field,
-        RETURN_INDEX,
-        "",
+    assert!(
+        flow_present_in_roots(
+            summary,
+            source_info,
+            name,
+            global_path(field),
+            (RETURN_INDEX.into(), Path::empty()),
+        ),
+        "expected flow ${} -> return in {name:?}, but it is absent.\nsummary: {summary:#?}",
+        &field[1..],
+    );
+}
+
+/* Asserts function `name` does NOT write parameter `param_num` into the global path `field`. */
+#[track_caller]
+pub(crate) fn check_no_param_into_global_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    param_num: i16,
+    field: &str,
+) {
+    assert!(
+        !flow_present_in_roots(
+            summary,
+            source_info,
+            name,
+            (param_num.into(), Path::empty()),
+            global_path(field),
+        ),
+        "unexpected flow @p{param_num} -> ${} in {name:?}.\nsummary: {summary:#?}",
+        &field[1..],
+    );
+}
+
+/* Asserts function `name` returns, at `ret_path`, the global path `field`: `check_returns_global_in`
+for a return path other than the whole value (`.#value` for arithmetic on the global). */
+#[track_caller]
+pub(crate) fn check_returns_global_at_in(
+    summary: &[FunctionSummary],
+    source_info: &IndexSourceInfo,
+    name: &str,
+    field: &str,
+    ret_path: &str,
+) {
+    assert!(
+        flow_present_in_roots(
+            summary,
+            source_info,
+            name,
+            global_path(field),
+            (RETURN_INDEX.into(), ret_path.parse().unwrap()),
+        ),
+        "expected flow ${} -> return{ret_path} in {name:?}, but it is absent.\nsummary: {summary:#?}",
+        &field[1..],
     );
 }
 
@@ -1165,33 +1198,36 @@ mod ap_tests {
     use super::*;
 
     #[test]
-    fn local_no_fields() {
+    fn local_pathless() {
         let mut locals = Locals::default();
         let b = locals.get_or_intern("b");
-        let ap = access_path_from_str("b", &locals);
+        let ap = access_path_from_str("b", &locals, &Globals::default());
         assert_eq!(ap.base, VariableRef::new_local_idx(b));
-        assert!(ap.fields.is_empty());
+        assert!(ap.is_pathless());
     }
 
     #[test]
     fn param_with_field() {
         assert_eq!(
-            access_path_from_str("@p1.f2", &Locals::default()),
-            DslPath {
-                base: VariableRef::new_parameter(1u32.into()),
-                fields: vec![PathSegment::symbol("f2")],
-            },
+            access_path_from_str("@p1.f2", &Locals::default(), &Globals::default()),
+            AccessPath::new(
+                VariableRef::new_parameter(1u32.into()),
+                [PathSegment::field("f2")]
+            ),
         );
     }
 
     #[test]
     fn global_with_field() {
+        let mut globals = Globals::default();
+        globals.declare("x", None);
+        let a = globals.declare("a$util.c", None);
         assert_eq!(
-            access_path_from_str("$globals.a", &Locals::default()),
-            DslPath {
-                base: VariableRef::new_global(),
-                fields: vec![PathSegment::symbol("a")],
-            },
+            access_path_from_str(r"$a$util\.c.deref.f", &Locals::default(), &globals),
+            AccessPath::new(
+                VariableRef::global(a),
+                [PathSegment::Deref, PathSegment::field("f")]
+            ),
         );
     }
 
@@ -1200,19 +1236,19 @@ mod ap_tests {
         let mut locals = Locals::default();
         let v = locals.get_or_intern("v");
         assert_eq!(
-            access_path_from_str("v.f1.f2", &locals),
-            DslPath {
-                base: VariableRef::new_local_idx(v),
-                fields: vec![PathSegment::symbol("f1"), PathSegment::symbol("f2")],
-            },
+            access_path_from_str("v.f1.f2", &locals, &Globals::default()),
+            AccessPath::new(
+                VariableRef::new_local_idx(v),
+                [PathSegment::field("f1"), PathSegment::field("f2")]
+            ),
         );
     }
 
     #[test]
     #[should_panic(expected = "empty access-path segment")]
-    fn parse_fields_rejects_empty_segments() {
+    fn parse_path_rejects_empty_segments() {
         // Silently dropping empties would make `.a..b.` and `.a.b` the same fixture.
-        parse_fields(".a..b.");
+        parse_path(".a..b.");
     }
 
     #[test]
@@ -1224,11 +1260,8 @@ mod ap_tests {
         let mut locals = Locals::default();
         let f = locals.get_or_intern("f");
         assert_eq!(
-            access_path_from_str(r"f.\[3]", &locals),
-            DslPath {
-                base: VariableRef::new_local_idx(f),
-                fields: vec![PathSegment::symbol("[3]")],
-            },
+            access_path_from_str(r"f.\[3]", &locals, &Globals::default()),
+            AccessPath::new(VariableRef::new_local_idx(f), [PathSegment::field("[3]")]),
         );
     }
 
@@ -1239,11 +1272,8 @@ mod ap_tests {
         let mut locals = Locals::default();
         let f = locals.get_or_intern("f");
         assert_eq!(
-            access_path_from_str("f.[3]", &locals),
-            DslPath {
-                base: VariableRef::new_local_idx(f),
-                fields: vec![PathSegment::offset(3)],
-            },
+            access_path_from_str("f.[3]", &locals, &Globals::default()),
+            AccessPath::new(VariableRef::new_local_idx(f), [PathSegment::offset(3)]),
         );
     }
 
@@ -1252,11 +1282,14 @@ mod ap_tests {
         let mut locals = Locals::default();
         locals.get_or_intern("b");
         // A `#`-prefixed source is a constant literal, not a variable.
-        assert_eq!(exp_from_str("#7", &locals), Exp::new_str("7"));
+        assert_eq!(
+            exp_from_str("#7", &locals, &Globals::default()),
+            Exp::new_str("7")
+        );
         // ...while a bare name is still an access-path variable.
         assert_eq!(
-            exp_from_str("b", &locals),
-            Exp::Variable(access_path_from_str("b", &locals).base)
+            exp_from_str("b", &locals, &Globals::default()),
+            Exp::variable(access_path_from_str("b", &locals, &Globals::default()).base)
         );
     }
 }

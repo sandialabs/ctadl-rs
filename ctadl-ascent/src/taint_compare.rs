@@ -101,9 +101,7 @@ fn analyze_parsed_flows(
         CallPolicy::default(),
         &model_matches,
     );
-    // No bridge specs: the harness models a single translation unit, with no cross-language
-    // (JNI-style) linking to resolve.
-    codegen_model_matches(&model_matches, &[], &mut index_facts, &mut source_info)?;
+    codegen_model_matches(&model_matches, &mut index_facts, &mut source_info);
     let index_result = taint_index_with_config(
         index_facts.clone(),
         IndexConfig::default(),

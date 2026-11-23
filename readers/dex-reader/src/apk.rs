@@ -31,11 +31,12 @@ fn dex_entry_sort_key(name: &str) -> (bool, u32) {
     }
     if let Some(rest) = name.strip_prefix("classes") {
         // "2.dex" or ".dex" (already handled above)
-        if let Some(num) = rest.strip_suffix(".dex") {
-            if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
-                let n: u32 = num.parse().unwrap_or(0);
-                return (true, n);
-            }
+        if let Some(num) = rest.strip_suffix(".dex")
+            && !num.is_empty()
+            && num.chars().all(|c| c.is_ascii_digit())
+        {
+            let n: u32 = num.parse().unwrap_or(0);
+            return (true, n);
         }
     }
     (false, 0)
@@ -134,6 +135,7 @@ pub fn split_apk_entries_of_file(path: &std::path::Path) -> DexResult<Vec<SplitA
         .map_err(|_| crate::error::DexError::InvalidDex("app bundle is not a valid ZIP"))?;
     let mut entries: Vec<SplitApkEntry> = archive
         .file_names()
+        .filter_map(Result::ok)
         .filter_map(|name| {
             let trimmed = name.trim_start_matches('/');
             if trimmed.contains('/') {
@@ -170,6 +172,44 @@ pub fn read_bundle_entry(path: &std::path::Path, entry_name: &str) -> DexResult<
     Ok(buf)
 }
 
+/// Decompresses one entry of an app bundle or APK into `out`, [`COPY_BUFFER`] bytes at a time, so
+/// the entry never has to fit in memory. Returns the number of bytes written.
+///
+/// `out` is written in whole buffers, so it needs no buffering of its own.
+///
+/// # Errors
+///
+/// [`std::io::Error`] for anything that goes wrong, reading the archive or writing `out`.
+pub fn copy_bundle_entry(
+    path: &std::path::Path,
+    entry_name: &str,
+    out: &mut impl std::io::Write,
+) -> std::io::Result<u64> {
+    let invalid = |what: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, what);
+    let mut archive = ZipArchive::new(std::fs::File::open(path)?)
+        .map_err(|_| invalid("not a valid ZIP archive"))?;
+    let mut entry = archive
+        .by_name(entry_name)
+        .map_err(|_| invalid("no such entry in ZIP archive"))?;
+    // Not `io::copy`, whose 8 KiB buffer makes a split of a hundred megabytes cost tens of
+    // thousands of reads and writes.
+    let mut buf = vec![0u8; COPY_BUFFER];
+    let mut written = 0u64;
+    loop {
+        let n = match entry.read(&mut buf) {
+            Ok(0) => return Ok(written),
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        out.write_all(&buf[..n])?;
+        written += n as u64;
+    }
+}
+
+/// The buffer [`copy_bundle_entry`] copies through.
+pub const COPY_BUFFER: usize = 1 << 20;
+
 /// True when the APK at `path` carries at least one `classes*.dex` entry. Only the ZIP central
 /// directory is read; nothing is decompressed or parsed.
 ///
@@ -180,7 +220,31 @@ pub fn has_dex_entries_of_file(path: &std::path::Path) -> DexResult<bool> {
         .map_err(|_| crate::error::DexError::InvalidDex("cannot open APK"))?;
     let archive = ZipArchive::new(file)
         .map_err(|_| crate::error::DexError::InvalidDex("APK is not a valid ZIP"))?;
-    Ok(archive.file_names().any(is_dex_entry_name))
+    Ok(archive
+        .file_names()
+        .filter_map(Result::ok)
+        .any(|name| is_dex_entry_name(&name)))
+}
+
+/// The uncompressed size, in bytes, of every `classes*.dex` entry in the APK at `path` together,
+/// as the ZIP directory records it; nothing is decompressed. 0 for an APK with no Dex.
+///
+/// Lets a caller estimate what lowering the Dex will take before starting it.
+pub fn dex_size_of_file(path: &std::path::Path) -> DexResult<u64> {
+    let file = std::fs::File::open(path)
+        .map_err(|_| crate::error::DexError::InvalidDex("cannot open APK"))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|_| crate::error::DexError::InvalidDex("APK is not a valid ZIP"))?;
+    let mut total = 0u64;
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index_raw(index)
+            .map_err(|_| crate::error::DexError::InvalidDex("failed to read entry from APK"))?;
+        if entry.name().is_ok_and(|name| is_dex_entry_name(&name)) {
+            total = total.saturating_add(entry.size());
+        }
+    }
+    Ok(total)
 }
 
 /// The `lib/<abi>/*.so` entries of an already-opened archive, sorted by entry name.
@@ -189,8 +253,9 @@ fn collect_native_lib_entries<R: std::io::Read + std::io::Seek>(
 ) -> Vec<NativeLibEntry> {
     let mut entries: Vec<NativeLibEntry> = archive
         .file_names()
+        .filter_map(Result::ok)
         .filter_map(|name| {
-            parse_native_lib_entry(name).map(|(abi, file_name)| NativeLibEntry {
+            parse_native_lib_entry(&name).map(|(abi, file_name)| NativeLibEntry {
                 entry_name: name.to_string(),
                 abi: abi.to_string(),
                 file_name: file_name.to_string(),
@@ -219,6 +284,30 @@ pub struct AbiChoice<'a> {
 /// If *no* ABI is usable, the plain preference order is returned: the caller's
 /// per-library reporting is what explains that case, and there is nothing better to pick.
 pub fn preferred_abi<'a>(apk_bytes: &[u8], entries: &'a [NativeLibEntry]) -> Option<AbiChoice<'a>> {
+    choose_abi(
+        ZipArchive::new(std::io::Cursor::new(apk_bytes)).ok(),
+        entries,
+    )
+}
+
+/// [`preferred_abi`] against an APK on disk. Only the central directory and the first bytes of
+/// the entries it looks at are read.
+pub fn preferred_abi_of_file<'a>(
+    path: &std::path::Path,
+    entries: &'a [NativeLibEntry],
+) -> Option<AbiChoice<'a>> {
+    let archive = std::fs::File::open(path)
+        .ok()
+        .and_then(|file| ZipArchive::new(file).ok());
+    choose_abi(archive, entries)
+}
+
+/// [`preferred_abi`] over an archive opened either way, or over `None` when it could not be
+/// opened.
+fn choose_abi<'a, R: std::io::Read + std::io::Seek>(
+    mut archive: Option<ZipArchive<R>>,
+    entries: &'a [NativeLibEntry],
+) -> Option<AbiChoice<'a>> {
     let plain = |entries: &'a [NativeLibEntry]| -> Option<&'a str> {
         for preferred in ABI_PREFERENCE {
             if let Some(entry) = entries.iter().find(|e| e.abi == *preferred) {
@@ -247,7 +336,6 @@ pub fn preferred_abi<'a>(apk_bytes: &[u8], entries: &'a [NativeLibEntry]) -> Opt
     rest.dedup();
     order.extend(rest);
 
-    let mut archive = ZipArchive::new(std::io::Cursor::new(apk_bytes)).ok();
     let mut unusable = Vec::new();
     for abi in order {
         let usable = entries
@@ -299,14 +387,17 @@ pub fn read_native_libs(apk_bytes: &[u8], abi: &str) -> DexResult<Vec<(NativeLib
         let mut zip_file = archive
             .by_index(index)
             .map_err(|_| crate::error::DexError::InvalidDex("failed to read entry from APK"))?;
-        let Some((entry_abi, file_name)) = parse_native_lib_entry(zip_file.name()) else {
+        let Ok(name) = zip_file.name().map(|n| n.into_owned()) else {
+            continue;
+        };
+        let Some((entry_abi, file_name)) = parse_native_lib_entry(&name) else {
             continue;
         };
         if entry_abi != abi {
             continue;
         }
         let entry = NativeLibEntry {
-            entry_name: zip_file.name().to_string(),
+            entry_name: name.clone(),
             abi: entry_abi.to_string(),
             file_name: file_name.to_string(),
         };
@@ -318,6 +409,34 @@ pub fn read_native_libs(apk_bytes: &[u8], abi: &str) -> DexResult<Vec<(NativeLib
     }
     out.sort_by(|(a, _), (b, _)| a.entry_name.cmp(&b.entry_name));
     Ok(out)
+}
+
+/// Streams every `lib/<abi>/*.so` entry for one ABI out of the APK at `path`, in entry-name
+/// order as in [`native_lib_entries`], handing `visit` each entry and a reader over its
+/// decompressed bytes.
+///
+/// The archive is read from the file, and each library is decompressed only as `visit` reads
+/// it, so neither the APK nor its libraries need to fit in memory at once. Stops at the first
+/// error, whether reading the archive or returned by `visit`.
+pub fn for_each_native_lib_of_file<E: From<crate::error::DexError>>(
+    path: &std::path::Path,
+    abi: &str,
+    mut visit: impl FnMut(&NativeLibEntry, &mut dyn Read) -> Result<(), E>,
+) -> Result<(), E> {
+    let file = std::fs::File::open(path)
+        .map_err(|_| crate::error::DexError::InvalidDex("cannot open APK"))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|_| crate::error::DexError::InvalidDex("APK is not a valid ZIP"))?;
+    for entry in collect_native_lib_entries(&archive) {
+        if entry.abi != abi {
+            continue;
+        }
+        let mut zip_file = archive
+            .by_name(&entry.entry_name)
+            .map_err(|_| crate::error::DexError::InvalidDex("failed to read entry from APK"))?;
+        visit(&entry, &mut zip_file)?;
+    }
+    Ok(())
 }
 
 /// True when `bytes` opens with an object-file magic a disassembler can load.
@@ -369,31 +488,36 @@ impl APKParser {
     /// only native libraries or only resources. Every class-level accessor below is then
     /// simply empty. A caller that has no use for such an APK checks [`Self::dex_count`].
     pub fn new(apk_bytes: &[u8]) -> DexResult<Self> {
-        let mut archive = ZipArchive::new(std::io::Cursor::new(apk_bytes))
+        let archive = ZipArchive::new(std::io::Cursor::new(apk_bytes))
             .map_err(|_| crate::error::DexError::InvalidDex("APK is not a valid ZIP"))?;
 
         let mut names: Vec<String> = archive
             .file_names()
+            .filter_map(Result::ok)
             .filter(|n| is_dex_entry_name(n))
             .map(String::from)
             .collect();
         names.sort_by_cached_key(|n| dex_entry_sort_key(n));
 
-        let mut dex_files = Vec::with_capacity(names.len());
-        for name in &names {
-            let mut zip_file = archive.by_name(name).map_err(|_| {
-                crate::error::DexError::InvalidDex("failed to read DEX entry from APK")
-            })?;
-            let mut buf = Vec::new();
-            zip_file.read_to_end(&mut buf).map_err(|_| {
-                crate::error::DexError::InvalidDex("failed to decompress DEX entry")
-            })?;
-            parse_dex_header(&buf)?;
-            dex_files.push(ApkDexFile {
-                name: name.clone(),
-                buffer: buf,
-            });
-        }
+        // Each entry is inflated on a thread of its own, through its own clone of the archive
+        // (the clones share the parsed central directory). A large app has a dozen entries of
+        // around 10 MB each.
+        use rayon::prelude::*;
+        let dex_files = names
+            .into_par_iter()
+            .map(|name| {
+                let mut archive = archive.clone();
+                let mut zip_file = archive.by_name(&name).map_err(|_| {
+                    crate::error::DexError::InvalidDex("failed to read DEX entry from APK")
+                })?;
+                let mut buf = Vec::with_capacity(zip_file.size().try_into().unwrap_or(0));
+                zip_file.read_to_end(&mut buf).map_err(|_| {
+                    crate::error::DexError::InvalidDex("failed to decompress DEX entry")
+                })?;
+                parse_dex_header(&buf)?;
+                Ok(ApkDexFile { name, buffer: buf })
+            })
+            .collect::<DexResult<Vec<_>>>()?;
 
         Ok(Self { dex_files })
     }
@@ -413,8 +537,9 @@ impl APKParser {
 
     /// Return one `(filename, DexParser)` pair per DEX buffer. Parsers borrow from this APKParser.
     pub fn dex_parsers_with_filenames(&self) -> Vec<(&str, DexParser<'_>)> {
+        use rayon::prelude::*;
         self.dex_files
-            .iter()
+            .par_iter()
             .map(|dex| {
                 (
                     dex.name.as_str(),
@@ -520,8 +645,8 @@ mod native_lib_tests {
     /// Builds an in-memory ZIP from `(name, contents)` pairs.
     fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        let options =
-            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
         for (name, contents) in entries {
             writer.start_file(*name, options).unwrap();
             writer.write_all(contents).unwrap();
@@ -678,6 +803,36 @@ mod native_lib_tests {
         let choice = preferred_abi(&apk, &entries).unwrap();
         assert_eq!(choice.abi, "arm64-v8a");
         assert!(choice.unusable.is_empty());
+    }
+
+    /// The streaming reader sees the same libraries, in the same order, as the in-memory one.
+    #[test]
+    fn streams_only_the_requested_abis_libraries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.apk");
+        std::fs::write(&path, sample_apk()).unwrap();
+        // `classes.dex` in `sample_apk` holds 8 bytes.
+        assert_eq!(dex_size_of_file(&path).unwrap(), 8);
+        let mut seen = Vec::new();
+        for_each_native_lib_of_file(&path, "arm64-v8a", |entry, reader| {
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).unwrap();
+            seen.push((entry.file_name.clone(), bytes));
+            Ok::<(), crate::error::DexError>(())
+        })
+        .unwrap();
+        let expected: Vec<(String, Vec<u8>)> = read_native_libs(&sample_apk(), "arm64-v8a")
+            .unwrap()
+            .into_iter()
+            .map(|(e, bytes)| (e.file_name, bytes))
+            .collect();
+        assert_eq!(seen, expected);
+
+        let entries = native_lib_entries(&sample_apk()).unwrap();
+        assert_eq!(
+            preferred_abi_of_file(&path, &entries).map(|c| c.abi),
+            Some("arm64-v8a")
+        );
     }
 
     #[test]

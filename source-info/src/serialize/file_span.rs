@@ -12,7 +12,6 @@ use crate::ids::{FileId, SpanId};
 use crate::serialize::leb128;
 use crate::span::{FileSpan, Span, SpanLen};
 use crate::span_table::SpanTable;
-use crate::store::{FileSpansStore, SpansStore};
 
 const TAG_EMPTY: u8 = 0;
 const TAG_LEN_1: u8 = 1;
@@ -66,7 +65,7 @@ pub fn write_span_table(buf: &mut impl Write, table: &SpanTable) -> std::io::Res
     Ok(())
 }
 
-pub fn read_span_table(r: &mut impl Read, store: SpansStore) -> std::io::Result<SpanTable> {
+pub fn read_span_table(r: &mut impl Read) -> std::io::Result<SpanTable> {
     let (count, _) = leb128::read_uleb128(r)?;
     let mut spans = Vec::with_capacity(count as usize);
     let mut previous_start: i32 = 0;
@@ -79,7 +78,7 @@ pub fn read_span_table(r: &mut impl Read, store: SpansStore) -> std::io::Result<
         let len = tag_to_span_len(tag[0], r)?;
         spans.push(Span { start, len });
     }
-    Ok(SpanTable::from_spans(spans, store))
+    Ok(SpanTable::from_spans(spans))
 }
 
 pub fn write_file_span_table(buf: &mut impl Write, table: &FileSpanTable) -> std::io::Result<()> {
@@ -91,10 +90,7 @@ pub fn write_file_span_table(buf: &mut impl Write, table: &FileSpanTable) -> std
     Ok(())
 }
 
-pub fn read_file_span_table(
-    r: &mut impl Read,
-    store: FileSpansStore,
-) -> std::io::Result<FileSpanTable> {
+pub fn read_file_span_table(r: &mut impl Read) -> std::io::Result<FileSpanTable> {
     let (count, _) = leb128::read_uleb128(r)?;
     let mut spans = Vec::with_capacity(count as usize);
     for _ in 0..count {
@@ -105,5 +101,5 @@ pub fn read_file_span_table(
             span: SpanId(span_idx),
         });
     }
-    Ok(FileSpanTable::from_spans(spans, store))
+    Ok(FileSpanTable::from_spans(spans))
 }
