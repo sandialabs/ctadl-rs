@@ -6,9 +6,10 @@ use tempfile::TempDir;
 use crate::driver::diff_with;
 use crate::{Atoms, CanonError, ErrorKind, Options, Report, diff_query, read_runs};
 
-/// A step at `line` of `a.c`, in the function at `index` of the run's table.
-fn step(order: i64, line: i64, index: usize) -> Value {
-    json!({
+/// A step at `line` of `a.c`, in the function at `index` of the run's table, with `props` as
+/// its property bag when given.
+fn step(order: i64, line: i64, index: usize, props: Option<&Value>) -> Value {
+    let mut s = json!({
         "executionOrder": order,
         "kinds": ["taint"],
         "location": {
@@ -18,15 +19,24 @@ fn step(order: i64, line: i64, index: usize) -> Value {
             },
             "logicalLocations": [{"index": index}]
         }
-    })
+    });
+    if let Some(p) = props {
+        s["properties"] = p.clone();
+    }
+    s
 }
 
 /// A `C0001.tainted-path` result whose flow visits `lines`, all in `main`.
 fn flow(lines: &[i64]) -> Value {
+    flow_with(lines, &[])
+}
+
+/// [`flow`], with `props[i]`, when it is there and not `None`, as step `i`'s property bag.
+fn flow_with(lines: &[i64], props: &[Option<Value>]) -> Value {
     let steps: Vec<Value> = lines
         .iter()
         .enumerate()
-        .map(|(i, &l)| step(i as i64 + 1, l, 0))
+        .map(|(i, &l)| step(i as i64 + 1, l, 0, props.get(i).and_then(Option::as_ref)))
         .collect();
     json!({
         "ruleId": "C0001.tainted-path",
@@ -82,6 +92,11 @@ fn doc(results: Vec<Value>) -> Value {
 fn invoked(mut d: Value, invocations: Vec<Value>) -> Value {
     d["runs"][0]["invocations"] = json!(invocations);
     d
+}
+
+/// Step properties: a `call-arg` vertex at instruction `insn`, and a callee.
+fn step_props(insn: u32, callee: &str) -> Value {
+    json!({"taintVertex": format!("call-arg({insn}, 0)"), "callee": callee})
 }
 
 /// An invocation with status `ok` and `exit_code`, and execution `notifications`.
@@ -162,8 +177,14 @@ fn identical_self() {
 #[test]
 fn reordered_and_renumbered_is_identical() {
     let f = Files::new();
+    // Every step of the flow has properties; B's vertices name another instruction.
+    let with_props = |insn| {
+        let mut results = base();
+        results[0] = flow_with(&[3, 5, 7], &vec![Some(step_props(insn, "snk")); 3]);
+        results
+    };
     let a = invoked(
-        doc(base()),
+        doc(with_props(12)),
         vec![
             invocation(
                 true,
@@ -180,7 +201,7 @@ fn reordered_and_renumbered_is_identical() {
     // Results reversed, messages changed, and a second table entry in front of `main`, with
     // every reference renumbered to match. The notifications are reversed, their message text
     // and arguments changed, and split over the two invocations, whose statuses are equal.
-    let mut results = base();
+    let mut results = with_props(99);
     results.reverse();
     let mut b = invoked(
         doc(results),
@@ -248,28 +269,31 @@ fn small_diff_text() {
             ],
         )]
     };
+    // The differing step has both properties; the others have none.
+    let props = [None, Some(step_props(12, "snk")), None];
     let a = invoked(
-        doc(vec![flow(&[3, 5, 7]), source(3)]),
+        doc(vec![flow_with(&[3, 5, 7], &props), source(3)]),
         invocations("warning", 0),
     );
     let b = invoked(
-        doc(vec![flow(&[3, 6, 7]), source(3)]),
+        doc(vec![flow_with(&[3, 6, 7], &props), source(3)]),
         invocations("error", 1),
     );
     let a = f.write("a.sarif", &a);
     let b = f.write("b.sarif", &b);
     let r = diff(&a, &b);
-    let step = |line: i64| {
+    let step = |line: i64, props: &str| {
         format!(
-            r#"{{"kinds":["taint"],"location":{{"physicalLocation":{{"artifactLocation":{{"uriBaseId":"SRC0","uri":"a.c"}},"region":{{"startLine":{line}}}}},"logicalLocations":["main"]}}}}"#
+            r#"{{"kinds":["taint"],"location":{{"physicalLocation":{{"artifactLocation":{{"uriBaseId":"SRC0","uri":"a.c"}},"region":{{"startLine":{line}}}}},"logicalLocations":["main"]}}{props}}}"#
         )
     };
+    let mid_props = r#","properties":{"taintVertex":"call-arg(_, 0)","callee":"snk"}"#;
     let result = |mid: i64| {
         format!(
             r#"{{"ruleId":"C0001.tainted-path","kind":"fail","level":"error","locations":[{{"physicalLocation":{{"artifactLocation":{{"uriBaseId":"SRC0","uri":"a.c"}},"region":{{"startLine":3}}}},"logicalLocations":["main"]}}],"codeFlows":[{{"threadFlows":[{{"locations":[{},{},{}]}}]}}],"properties":{{"taintLabels":["L"],"sourceFunctions":["src"],"sinkFunctions":["snk"]}}}}"#,
-            step(3),
-            step(mid),
-            step(7)
+            step(3, ""),
+            step(mid, mid_props),
+            step(7, "")
         )
     };
     let note = |level: &str| {
@@ -502,6 +526,30 @@ fn endpoints_only() {
     let b = f.write("sb.sarif", &doc(vec![source(4)]));
     assert!(!diff_query(&a, &b, &ends).unwrap().identical());
 
+    // Each endpoint's properties are compared; an interior step's are not.
+    let props = |vertex: [u32; 3], callee: [&str; 3]| {
+        let ps: Vec<Option<Value>> = vertex
+            .iter()
+            .zip(callee)
+            .map(|(&v, c)| Some(json!({"taintVertex": format!("call-arg(1, {v})"), "callee": c})))
+            .collect();
+        doc(vec![flow_with(&[3, 5, 7], &ps)])
+    };
+    let a = f.write("pa.sarif", &props([0, 0, 0], ["f", "g", "h"]));
+    for (name, b, same) in [
+        ("interior.sarif", props([0, 1, 0], ["f", "g", "h"]), true),
+        ("first.sarif", props([1, 0, 0], ["f", "g", "h"]), false),
+        ("last.sarif", props([0, 0, 0], ["f", "g", "k"]), false),
+    ] {
+        let b = f.write(name, &b);
+        assert!(!diff(&a, &b).identical(), "{name}");
+        let r = diff_query(&a, &b, &ends).unwrap();
+        assert_eq!(r.identical(), same, "{name}");
+        if !same {
+            assert_eq!(counts(&r), (vec![(1, 0)], vec![(0, 1)]), "{name}");
+        }
+    }
+
     // Notifications and statuses are compared as without the flag.
     let with = |ok: bool, level: &str| {
         invoked(
@@ -527,6 +575,46 @@ fn endpoints_only() {
             want,
             "{name}"
         );
+    }
+}
+
+#[test]
+fn step_properties_compared() {
+    let f = Files::new();
+    let with = |props: Option<Value>| doc(vec![flow_with(&[3, 5, 7], &[None, props])]);
+    let a = f.write("a.sarif", &with(Some(step_props(12, "snk"))));
+    for (name, b) in [
+        (
+            "vertex.sarif",
+            with(Some(
+                json!({"taintVertex": "call-arg(12, 1)", "callee": "snk"}),
+            )),
+        ),
+        ("callee.sarif", with(Some(step_props(12, "snk2")))),
+        ("no_vertex.sarif", with(Some(json!({"callee": "snk"})))),
+        (
+            "no_callee.sarif",
+            with(Some(json!({"taintVertex": "call-arg(12, 0)"}))),
+        ),
+        ("no_props.sarif", with(None)),
+    ] {
+        let b = f.write(name, &b);
+        let r = diff(&a, &b);
+        assert!(!r.identical(), "{name}");
+        assert_eq!(counts(&r), (vec![(1, 0)], vec![(0, 1)]), "{name}");
+    }
+    // Another instruction id, or a property the comparison does not read, is no difference.
+    for (name, b) in [
+        ("insn.sarif", with(Some(step_props(13, "snk")))),
+        (
+            "other.sarif",
+            with(Some(
+                json!({"taintVertex": "call-arg(12, 0)", "callee": "snk", "x": 1}),
+            )),
+        ),
+    ] {
+        let b = f.write(name, &b);
+        assert!(diff(&a, &b).identical(), "{name}");
     }
 }
 
@@ -583,6 +671,11 @@ fn errors_are_errors() {
     empty["runs"][0]["results"][0]["codeFlows"][0]["threadFlows"][0]["locations"] = json!([]);
     let empty = f.write("empty.sarif", &empty);
 
+    let mut bad_callee = doc(base());
+    bad_callee["runs"][0]["results"][0]["codeFlows"][0]["threadFlows"][0]["locations"][1]["properties"] =
+        json!({"callee": 3});
+    let bad_callee = f.write("callee.sarif", &bad_callee);
+
     for endpoints_only in [false, true] {
         let opts = Options {
             endpoints_only,
@@ -591,6 +684,7 @@ fn errors_are_errors() {
         for (bad, canon) in [
             (&missing, None),
             (&not_json, None),
+            (&bad_callee, None),
             (&out_of_range, Some(CanonError::OutOfRange)),
             (&not_increasing, Some(CanonError::NotIncreasing)),
             (&empty, Some(CanonError::EmptyFlow)),

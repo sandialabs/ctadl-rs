@@ -21,7 +21,8 @@ pub struct Options {
     /// invocations.
     pub limit: usize,
     /// Compare results of [`ENDPOINTS_RULE`] by the endpoints of their thread flows, leaving
-    /// out their interior steps, primary locations and taint vertices.
+    /// out their interior steps, primary locations and result taint vertices. Each endpoint
+    /// is compared whole, its step properties included.
     pub endpoints_only: bool,
 }
 

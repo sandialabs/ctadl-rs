@@ -27,10 +27,12 @@ pub enum Error {
     /// The file is not JSON, or not SARIF as `serde-sarif` reads it (an unknown `kind` or
     /// `level` is one way).
     Sarif(serde_json::Error),
-    /// A result property ctadl writes in one shape holds another.
+    /// A result or step property ctadl writes in one shape holds another.
     Property {
         key: &'static str,
         expected: &'static str,
+        /// The property is a step's, not a result's.
+        on_step: bool,
     },
     /// A logical location reference whose `index` is negative.
     NegativeIndex(i64),
@@ -43,8 +45,13 @@ impl fmt::Display for Error {
         match self {
             Error::Read(e) => write!(f, "cannot read the file: {e}"),
             Error::Sarif(e) => write!(f, "not SARIF 2.1.0: {e}"),
-            Error::Property { key, expected } => {
-                write!(f, "result property `{key}` is not {expected}")
+            Error::Property {
+                key,
+                expected,
+                on_step,
+            } => {
+                let owner = if *on_step { "step" } else { "result" };
+                write!(f, "{owner} property `{key}` is not {expected}")
             }
             Error::NegativeIndex(i) => write!(f, "logical location index {i} is negative"),
             Error::UnnamedLogical => {
@@ -218,9 +225,33 @@ fn step(s: &sarif::ThreadFlowLocation, atoms: &mut Atoms) -> Result<RawStep<u32>
             .as_ref()
             .map(|l| location(l, atoms))
             .transpose()?,
-        vertex: None,
-        callee: None,
+        vertex: step_prop(s, "taintVertex", atoms, without_call_site)?,
+        callee: step_prop(s, "callee", atoms, as_is)?,
     })
+}
+
+/// The step property `key`, a string, rewritten by `rw` and interned; `None` when the step has
+/// no such property.
+fn step_prop(
+    s: &sarif::ThreadFlowLocation,
+    key: &'static str,
+    atoms: &mut Atoms,
+    rw: Rewrite,
+) -> Result<Option<u32>, Error> {
+    let Some(v) = s
+        .properties
+        .as_ref()
+        .and_then(|b| b.additional_properties.get(key))
+    else {
+        return Ok(None);
+    };
+    v.as_str()
+        .map(|s| Some(atoms.intern(&rw(s))))
+        .ok_or(Error::Property {
+            key,
+            expected: "a string",
+            on_step: true,
+        })
 }
 
 fn location(l: &sarif::Location, atoms: &mut Atoms) -> Result<RawLocation<u32>, Error> {
@@ -326,6 +357,7 @@ fn string(v: &Value, key: &'static str, atoms: &mut Atoms, rw: Rewrite) -> Resul
         .ok_or(Error::Property {
             key,
             expected: "a string",
+            on_step: false,
         })
 }
 
@@ -338,6 +370,7 @@ fn strings(
     let err = Error::Property {
         key,
         expected: "an array of strings",
+        on_step: false,
     };
     let Value::Array(xs) = v else {
         return Err(err);
@@ -359,6 +392,7 @@ fn keyed(
     let err = || Error::Property {
         key,
         expected: "an object of arrays of strings",
+        on_step: false,
     };
     let Value::Object(m) = v else {
         return Err(err());
@@ -501,6 +535,11 @@ mod tests {
                                         "location": {
                                             "message": {"text": "step one"},
                                             "logicalLocations": [{"index": 0}]
+                                        },
+                                        "properties": {
+                                            "taintVertex": "call-arg(12, 0).f",
+                                            "callee": "snk",
+                                            "other": 1
                                         }
                                     },
                                     {
@@ -515,7 +554,8 @@ mod tests {
                                                 }
                                             },
                                             "logicalLocations": [{"index": 1}]
-                                        }
+                                        },
+                                        "properties": {"callee": "snk2"}
                                     },
                                     {"executionOrder": 3}
                                 ]
@@ -681,8 +721,8 @@ mod tests {
                                     order: Some(1),
                                     kinds: vec![a("taint")],
                                     location: Some(logical_only(0)),
-                                    vertex: None,
-                                    callee: None,
+                                    vertex: Some(a("call-arg(_, 0).f")),
+                                    callee: Some(a("snk")),
                                 },
                                 RawStep {
                                     order: Some(2),
@@ -701,7 +741,7 @@ mod tests {
                                         logical: vec![Index(1)],
                                     }),
                                     vertex: None,
-                                    callee: None,
+                                    callee: Some(a("snk2")),
                                 },
                                 RawStep {
                                     order: Some(3),
@@ -834,6 +874,16 @@ mod tests {
                 format!("{tf}/1/location/physicalLocation/address/kind"),
                 json!("data"),
             ),
+            (
+                format!("{tf}/0/properties/taintVertex"),
+                json!("call-arg(12, 1).f"),
+            ),
+            (
+                format!("{tf}/0/properties/taintVertex"),
+                json!("call-arg(12, 0).g"),
+            ),
+            (format!("{tf}/0/properties/callee"), json!("snk3")),
+            (format!("{tf}/1/properties/callee"), json!("snk3")),
             (format!("{props}/taintLabels/0"), json!("M")),
             (format!("{props}/taintVertices/L/1"), json!("local(y)")),
             (
@@ -870,8 +920,15 @@ mod tests {
             assert_ne!(edited, doc(), "{ptr}: the edit changed nothing");
             assert_ne!(parse(&edited, &mut atoms).unwrap(), base, "{ptr}");
         }
-        let no_exit_code = remove(&[format!("{INV}/exitCode")]);
-        assert_ne!(parse(&no_exit_code, &mut atoms).unwrap(), base);
+        for ptr in [
+            format!("{INV}/exitCode"),
+            format!("{tf}/0/properties/taintVertex"),
+            format!("{tf}/0/properties/callee"),
+            format!("{tf}/1/properties/callee"),
+        ] {
+            let removed = remove(std::slice::from_ref(&ptr));
+            assert_ne!(parse(&removed, &mut atoms).unwrap(), base, "{ptr}");
+        }
         let mut one_fewer = doc();
         one_fewer
             .pointer_mut(&format!("{INV}/toolExecutionNotifications"))
@@ -902,6 +959,11 @@ mod tests {
                 format!("{tf}/locations/0/location/message/text"),
                 json!("changed"),
             ),
+            (
+                format!("{tf}/locations/0/properties/taintVertex"),
+                json!("call-arg(13, 0).f"),
+            ),
+            (format!("{tf}/locations/0/properties/other"), json!(2)),
             (format!("{FIRST}/ruleIndex"), json!(7)),
             (format!("{phys}/artifactLocation/index"), json!(3)),
             (format!("{phys}/region/message/text"), json!("changed")),
@@ -962,6 +1024,7 @@ mod tests {
         // Removing what is dropped is no change either.
         let removed = remove(&[
             format!("{FIRST}/ruleIndex"),
+            format!("{tf}/locations/0/properties/other"),
             format!("{props}/sourceCallee"),
             format!("{props}/fileSpanId"),
             format!("{NOTE}/message/text"),
@@ -1044,8 +1107,35 @@ mod tests {
         ] {
             let bad = edit(&[(&format!("{FIRST}/properties/{key}"), value)]);
             match parse(&bad, &mut atoms) {
-                Err(Error::Property { key: k, .. }) => assert_eq!(k, key),
+                Err(
+                    e @ Error::Property {
+                        key: k, on_step, ..
+                    },
+                ) => {
+                    assert_eq!(k, key);
+                    assert!(!on_step, "{key}");
+                    assert!(e.to_string().starts_with("result property"), "{e}");
+                }
                 other => panic!("{key}: {other:?}"),
+            }
+        }
+        let tf = format!("{FIRST}/codeFlows/0/threadFlows/0/locations");
+        for (key, value) in [("taintVertex", json!(["x"])), ("callee", json!(3))] {
+            let bad = edit(&[(&format!("{tf}/0/properties/{key}"), value)]);
+            match parse(&bad, &mut atoms) {
+                Err(
+                    e @ Error::Property {
+                        key: k, on_step, ..
+                    },
+                ) => {
+                    assert_eq!(k, key);
+                    assert!(on_step, "{key}");
+                    assert_eq!(
+                        e.to_string(),
+                        format!("step property `{key}` is not a string")
+                    );
+                }
+                other => panic!("step {key}: {other:?}"),
             }
         }
         assert!(matches!(
