@@ -3,11 +3,11 @@
 A step of a flow names its tainted vertex and callee only in message text. Write them as
 structured step properties, `taintVertex` and `callee`, which `diff-query` then compares.
 
+On a return step `callee` holds the function returned from. The message keeps naming the
+function returned into, the caller (`ctadl-ascent/src/query_engine/formatter.rs:2920`).
+
 Open questions, found while writing the spec for those changes:
 
-- On a return step the message names the function returned into, the caller
-  (`ctadl-ascent/src/query_engine/formatter.rs:2920`). Should `callee` hold that, or the
-  function returned from?
 - A call site with several callees keeps one, whichever sorts last by function id
   (`formatter.rs:2571`). Two indexes that number functions differently can then write
   different `callee` values for one flow, which `diff-query` would report. Write every callee,

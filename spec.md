@@ -68,15 +68,16 @@ must stay consistent with `docs/spec.md` (F9, F12, §4.5, §5) and `docs/debuggi
   the name of the site's callee. When the call graph gives the site no callee, the step has no
   `callee`.
 - R3. **`callee` on an edge step.** A call step's `callee` is the function called. A return
-  step's `callee` is the function returned from. (C1.)
+  step's `callee` is the function returned from, which
+  the step's message does not name.
 - R4. **One callee, by name.** `callee` is one function name, never a list. At a site with
-  several callees it is the same name whatever ids the index gave the functions. (C2.)
+  several callees it is the same name whatever ids the index gave the functions. (C1.)
 - R5. **Property and message agree.** Where a step's message names a callee (source, sink,
   call, summarized call), it names the function in `callee`. A return step's message still
   names the function returned into.
 - R6. **Steps do not change.** Which steps a flow has, their order, locations, `kinds` and
   `executionOrder` are what they were. A step that was not written is still not written, and
-  its vertex appears nowhere. (C3.)
+  its vertex appears nowhere. (C2.)
 - R7. **Nothing else changes.** Results, their properties, notifications, invocations and
   message text are byte for byte what they were, with one exception: at a call site with
   several callees, everything that names the site's callee names the one R4 picks. That is a
@@ -159,16 +160,13 @@ change; the sink function they read is now the site's callee.
 
 ## Concerns
 
-- C1. **`callee` on a return step.** The message names the caller. Options: the function
-  returned from; the caller, as the message; no `callee` on a return. The caller is already
-  compared, as the step's logical location. The spec assumes the function returned from (R3).
-- C2. **Several callees at one call site.** Options: one name, the first by name (assumed,
+- C1. **Several callees at one call site.** Options: one name, the first by name (assumed,
   R4); every name, as a list. A list makes a changed callee set visible, but changes
   `diff-query`'s reader and the proved canonical step (an atom becomes a sorted set). One
   name keeps both, but a callee that is added or removed behind the first goes unseen, and a
   source or sink step may name a function other than the one its model named, since the
   endpoint does not record that.
-- C3. **A flow whose first or last step is not its source or sink.** See Background. Options:
+- C2. **A flow whose first or last step is not its source or sink.** See Background. Options:
   accept and document (assumed, R6); always write the sink step, which adds a step to some
   existing flows; give a function-anchored endpoint a step, which needs a location for it.
   Under `--endpoints-only` an accepted case compares an interior step in the endpoint's place.
