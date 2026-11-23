@@ -1,11 +1,12 @@
 # Intent: write what a step says as structured step properties, in `ctadl query`
 
-For after the `diff-query` changes of `intent.md` land.
+For after the `diff-query` changes of the `diff-query-step-props` branch land (design
+documents in `diff-query-step-props/` on the `design` branch).
 
 A step of a flow names its tainted vertex and callee only in message text. Write them as
 structured step properties, `taintVertex` and `callee`, which `diff-query` then compares.
 
-Open questions, found while writing the spec for `intent.md`:
+Open questions, found while writing the spec for those changes:
 
 - On a return step the message names the function returned into, the caller
   (`ctadl-ascent/src/query_engine/formatter.rs:2920`). Should `callee` hold that, or the
