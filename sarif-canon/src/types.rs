@@ -128,8 +128,7 @@ pub struct RawStep<A> {
     /// `kinds`, in file order.
     pub kinds: Vec<A>,
     pub location: Option<RawLocation<A>>,
-    /// `properties.taintVertex`, with the instruction id of a `call-arg` vertex already
-    /// replaced.
+    /// `properties.taintVertex`, rewritten as [`Props::vertex`] is.
     pub vertex: Option<A>,
     /// `properties.callee`.
     pub callee: Option<A>,
@@ -183,10 +182,7 @@ pub struct CanonStep<A> {
     /// A bag.
     pub kinds: Vec<A>,
     pub location: Option<CanonLocation<A>>,
-    /// `properties.taintVertex`, with the instruction id of a `call-arg` vertex already
-    /// replaced.
     pub vertex: Option<A>,
-    /// `properties.callee`.
     pub callee: Option<A>,
 }
 

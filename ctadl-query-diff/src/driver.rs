@@ -74,22 +74,12 @@ pub(crate) fn diff_with(
     let by_text = |x: &CanonResult<u32>, y: &CanonResult<u32>| render(x).cmp(&render(y));
     let (more_in_a, more_in_b) = differing(&ca, &cb, cmp_result_u32, by_text, render, opts.limit);
     // A row is its own printed form, so it is compared and sampled by the same order.
-    let (notifications_more_in_a, notifications_more_in_b) = differing(
-        &pa.notifications,
-        &pb.notifications,
-        String::cmp,
-        String::cmp,
-        String::clone,
-        opts.limit,
-    );
-    let (invocations_more_in_a, invocations_more_in_b) = differing(
-        &pa.statuses,
-        &pb.statuses,
-        String::cmp,
-        String::cmp,
-        String::clone,
-        opts.limit,
-    );
+    let rows = |a: &[String], b: &[String]| {
+        differing(a, b, String::cmp, String::cmp, String::clone, opts.limit)
+    };
+    let (notifications_more_in_a, notifications_more_in_b) =
+        rows(&pa.notifications, &pb.notifications);
+    let (invocations_more_in_a, invocations_more_in_b) = rows(&pa.statuses, &pb.statuses);
     Ok(Report {
         a: a.display().to_string(),
         b: b.display().to_string(),
@@ -110,8 +100,8 @@ pub(crate) fn diff_with(
     })
 }
 
-/// The values `a` has more of than `b`, and those `b` has more of, both sorted by `cmp`, as at
-/// most `limit` samples each: the first by `by_text`, each printed by `render`.
+/// Of `a` and `b`, each sorted by `cmp`: the values `a` has more of than `b`, and those `b` has
+/// more of, as at most `limit` samples each, the first by `by_text`, each printed by `render`.
 fn differing<T>(
     a: &[T],
     b: &[T],
