@@ -69,6 +69,12 @@ Facts planning already measured on this tree, which later phases rely on:
   profile, so `renumbered_ids` (`diff_query.rs:601`) stays identical when notifications are
   compared.
 
+**As built.** All gates passed (Verus 279 verified, 0 errors). Every profile has four
+`CTADL0111.call-without-body` notifications: three (`sink_beta`, `sink_omega`, `src_zeta`,
+`properties: {calls: 3}`) are equal once `message.text` and `message.arguments` are removed,
+and the fourth (`src_alpha`, `{calls: 2}`) differs. The `machine` profile has six
+notifications (it adds `CTADL0101.path-generation-disabled`), the others five.
+
 ## Phase 1: statements (R14; D1)
 
 Depends on: 0.
