@@ -1,9 +1,10 @@
-//! SARIF files to raw runs.
+//! SARIF files to raw runs, execution notifications and invocation statuses.
 //!
 //! A file is read with `serde-sarif`, the crate `ctadl query` writes with, and only the fields
 //! the comparison uses are taken out of it; every other field is never looked at, whatever it
-//! holds. Strings are interned into the caller's [`Atoms`]. Logical location references stay
-//! numbers: resolving them, and checking their range, is the canonical form's job.
+//! holds. Strings of results are interned into the caller's [`Atoms`]. Logical location
+//! references stay numbers: resolving them, and checking their range, is the canonical form's
+//! job. Notifications and statuses become one canonical JSON string each, with no atoms.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -66,19 +67,86 @@ impl std::error::Error for Error {
     }
 }
 
-/// The raw runs of the SARIF file at `path`, in file order, their strings interned into
-/// `atoms`.
+/// What a SARIF file holds that the comparison uses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Parsed {
+    /// The raw runs, in file order.
+    pub runs: Vec<RawRun<u32>>,
+    /// The execution notifications of every invocation of every run, each as its
+    /// [`notification_row`], sorted.
+    pub notifications: Vec<String>,
+    /// The status of every invocation of every run, each as its [`status_row`], sorted.
+    pub statuses: Vec<String>,
+}
+
+/// The raw runs of the SARIF file at `path`, their strings interned into `atoms`, and its
+/// notifications and statuses.
 ///
-/// Only the parsed runs outlive the call: the file's bytes and its parsed document are dropped
+/// Only the [`Parsed`] outlives the call: the file's bytes and its parsed document are dropped
 /// before it returns.
-pub fn read_runs(path: &Path, atoms: &mut Atoms) -> Result<Vec<RawRun<u32>>, Error> {
+pub fn read_runs(path: &Path, atoms: &mut Atoms) -> Result<Parsed, Error> {
     let bytes = std::fs::read(path).map_err(Error::Read)?;
     parse_runs(&bytes, atoms)
 }
 
-fn parse_runs(bytes: &[u8], atoms: &mut Atoms) -> Result<Vec<RawRun<u32>>, Error> {
+fn parse_runs(bytes: &[u8], atoms: &mut Atoms) -> Result<Parsed, Error> {
     let log: sarif::Sarif = serde_json::from_slice(bytes).map_err(Error::Sarif)?;
-    log.runs.iter().map(|run| raw_run(run, atoms)).collect()
+    let runs = log
+        .runs
+        .iter()
+        .map(|run| raw_run(run, atoms))
+        .collect::<Result<_, Error>>()?;
+    let invocations = || log.runs.iter().flat_map(|r| r.invocations.iter().flatten());
+    let mut notifications: Vec<String> = invocations()
+        .flat_map(|i| i.tool_execution_notifications.iter().flatten())
+        .map(notification_row)
+        .collect();
+    notifications.sort_unstable();
+    let mut statuses: Vec<String> = invocations().map(status_row).collect();
+    statuses.sort_unstable();
+    Ok(Parsed {
+        runs,
+        notifications,
+        statuses,
+    })
+}
+
+/// A notification as compact JSON, without its message's `text` and `arguments` (the text and
+/// the values it is rendered from), and with the keys of every object sorted. Arrays keep their
+/// order. A key SARIF does not define is not read, so it is not in the row.
+fn notification_row(n: &sarif::Notification) -> String {
+    let mut v = serde_json::to_value(n).expect("a notification is JSON");
+    if let Some(Value::Object(m)) = v.get_mut("message") {
+        m.remove("text");
+        m.remove("arguments");
+    }
+    sorted_keys(v).to_string()
+}
+
+/// `v` with the keys of every object in it sorted.
+fn sorted_keys(v: Value) -> Value {
+    match v {
+        Value::Object(m) => {
+            let mut kvs: Vec<(String, Value)> = m.into_iter().collect();
+            kvs.sort_unstable_by(|(x, _), (y, _)| x.cmp(y));
+            Value::Object(kvs.into_iter().map(|(k, v)| (k, sorted_keys(v))).collect())
+        }
+        Value::Array(xs) => Value::Array(xs.into_iter().map(sorted_keys).collect()),
+        v => v,
+    }
+}
+
+/// An invocation's status as compact JSON: `executionSuccessful`, and `exitCode` when present.
+fn status_row(i: &sarif::Invocation) -> String {
+    let mut m = serde_json::Map::new();
+    m.insert(
+        "executionSuccessful".into(),
+        Value::Bool(i.execution_successful),
+    );
+    if let Some(code) = i.exit_code {
+        m.insert("exitCode".into(), Value::from(code));
+    }
+    Value::Object(m).to_string()
 }
 
 fn raw_run(run: &sarif::Run, atoms: &mut Atoms) -> Result<RawRun<u32>, Error> {
@@ -348,8 +416,42 @@ mod tests {
                 "tool": {"driver": {"name": "ctadl", "version": "0.1.7"}},
                 "invocations": [{
                     "executionSuccessful": true,
+                    "exitCode": 0,
+                    "exitCodeDescription": "ok",
+                    "arguments": ["query", "/a/b"],
                     "commandLine": "ctadl query /a/b",
-                    "startTimeUtc": "2026-01-01T00:00:00Z"
+                    "startTimeUtc": "2026-01-01T00:00:00Z",
+                    "toolConfigurationNotifications": [{
+                        "descriptor": {"id": "CFG1"},
+                        "level": "note",
+                        "message": {"text": "configured"}
+                    }],
+                    "ruleConfigurationOverrides": [{
+                        "descriptor": {"id": "C0001"},
+                        "configuration": {"enabled": false}
+                    }],
+                    "toolExecutionNotifications": [
+                        {
+                            "descriptor": {"id": "CTADL0111"},
+                            "level": "warning",
+                            "message": {
+                                "id": "call-without-body",
+                                "arguments": ["sink_fn", "3"],
+                                "text": "sink_fn has no body, called 3 times"
+                            },
+                            "properties": {"function": "sink_fn", "calls": 3}
+                        },
+                        {
+                            "descriptor": {"id": "CTADL0101"},
+                            "level": "note",
+                            "message": {
+                                "id": "path-generation-disabled",
+                                "arguments": [],
+                                "text": "paths are not generated"
+                            },
+                            "properties": {"flags": ["a", "b"]}
+                        }
+                    ]
                 }],
                 "originalUriBaseIds": {"SRC0": {"uri": "file:///a/src/"}},
                 "properties": {"parquet_dir": "/a/b"},
@@ -454,7 +556,7 @@ mod tests {
         })
     }
 
-    fn parse(v: &Value, atoms: &mut Atoms) -> Result<Vec<RawRun<u32>>, Error> {
+    fn parse(v: &Value, atoms: &mut Atoms) -> Result<Parsed, Error> {
         parse_runs(&serde_json::to_vec(v).unwrap(), atoms)
     }
 
@@ -486,6 +588,16 @@ mod tests {
     }
 
     const FIRST: &str = "/runs/0/results/0";
+    const INV: &str = "/runs/0/invocations/0";
+    /// The execution notification `doc()` writes first.
+    const NOTE: &str = "/runs/0/invocations/0/toolExecutionNotifications/0";
+
+    /// `doc()`'s notification and status rows, sorted.
+    const NOTIFICATION_ROWS: [&str; 2] = [
+        r#"{"descriptor":{"id":"CTADL0101"},"level":"note","message":{"id":"path-generation-disabled"},"properties":{"flags":["a","b"]}}"#,
+        r#"{"descriptor":{"id":"CTADL0111"},"level":"warning","message":{"id":"call-without-body"},"properties":{"calls":3,"function":"sink_fn"}}"#,
+    ];
+    const STATUS_ROW: &str = r#"{"executionSuccessful":true,"exitCode":0}"#;
 
     #[test]
     fn call_arg_rewrite() {
@@ -510,7 +622,10 @@ mod tests {
     fn reads_kept_fields() {
         use sarif_canon::types::RawLogicalRef::{Index, Inline};
         let mut atoms = Atoms::new();
-        let runs = parse(&doc(), &mut atoms).unwrap();
+        let parsed = parse(&doc(), &mut atoms).unwrap();
+        assert_eq!(parsed.notifications, NOTIFICATION_ROWS);
+        assert_eq!(parsed.statuses, [STATUS_ROW]);
+        let runs = parsed.runs;
         let a = |s: &str| atoms.get_id(s).unwrap_or_else(|| panic!("no atom {s}"));
         let none = Props {
             labels: None,
@@ -661,6 +776,10 @@ mod tests {
             "/a/b",
             "ctadl",
             "0.1.7",
+            "CTADL0111",
+            "call-without-body",
+            "sink_fn has no body, called 3 times",
+            "CFG1",
         ] {
             assert_eq!(atoms.get_id(s), None, "{s}");
         }
@@ -737,6 +856,12 @@ mod tests {
                 "/runs/0/results/2/properties/taintedFormals".into(),
                 json!({"1": ["L", "M"]}),
             ),
+            (format!("{INV}/executionSuccessful"), json!(false)),
+            (format!("{INV}/exitCode"), json!(1)),
+            (format!("{NOTE}/level"), json!("error")),
+            (format!("{NOTE}/descriptor/id"), json!("CTADL0112")),
+            (format!("{NOTE}/message/id"), json!("other")),
+            (format!("{NOTE}/properties/calls"), json!(4)),
         ];
         let mut atoms = Atoms::new();
         let base = parse(&doc(), &mut atoms).unwrap();
@@ -745,6 +870,16 @@ mod tests {
             assert_ne!(edited, doc(), "{ptr}: the edit changed nothing");
             assert_ne!(parse(&edited, &mut atoms).unwrap(), base, "{ptr}");
         }
+        let no_exit_code = remove(&[format!("{INV}/exitCode")]);
+        assert_ne!(parse(&no_exit_code, &mut atoms).unwrap(), base);
+        let mut one_fewer = doc();
+        one_fewer
+            .pointer_mut(&format!("{INV}/toolExecutionNotifications"))
+            .unwrap()
+            .as_array_mut()
+            .unwrap()
+            .remove(0);
+        assert_ne!(parse(&one_fewer, &mut atoms).unwrap(), base);
     }
 
     #[test]
@@ -790,13 +925,22 @@ mod tests {
                 "/runs/0/results/1/properties/taintVertex".into(),
                 json!("call-arg(1, -1)"),
             ),
+            (format!("{INV}/commandLine"), json!("ctadl query /c")),
+            (format!("{INV}/startTimeUtc"), json!("2026-02-02T00:00:00Z")),
+            (format!("{NOTE}/message/text"), json!("changed")),
             (
-                "/runs/0/invocations/0/commandLine".into(),
-                json!("ctadl query /c"),
+                format!("{NOTE}/message/arguments"),
+                json!(["other_fn", "4"]),
             ),
             (
-                "/runs/0/invocations/0/startTimeUtc".into(),
-                json!("2026-02-02T00:00:00Z"),
+                format!("{INV}/toolConfigurationNotifications/0/level"),
+                json!("error"),
+            ),
+            (format!("{INV}/exitCodeDescription"), json!("changed")),
+            (format!("{INV}/arguments"), json!(["query", "/c"])),
+            (
+                format!("{INV}/ruleConfigurationOverrides/0/configuration/enabled"),
+                json!(true),
             ),
             ("/runs/0/tool/driver/version".into(), json!("0.1.8")),
             (
@@ -820,7 +964,13 @@ mod tests {
             format!("{FIRST}/ruleIndex"),
             format!("{props}/sourceCallee"),
             format!("{props}/fileSpanId"),
-            "/runs/0/invocations".into(),
+            format!("{NOTE}/message/text"),
+            format!("{NOTE}/message/arguments"),
+            format!("{INV}/toolConfigurationNotifications"),
+            format!("{INV}/exitCodeDescription"),
+            format!("{INV}/arguments"),
+            format!("{INV}/ruleConfigurationOverrides"),
+            format!("{INV}/commandLine"),
             "/runs/0/originalUriBaseIds".into(),
             "/runs/0/properties".into(),
         ]);
@@ -942,10 +1092,11 @@ mod tests {
             &mut atoms,
         )
         .unwrap();
-        assert_eq!(a[0].results, b[0].results);
-        assert_eq!(a[0].logical[1], b[0].logical[1]);
-        assert_ne!(a[0].logical[0], b[0].logical[0]);
-        assert_eq!(b[0].logical[0].fqn, atoms.get_id("fresh").unwrap());
+        let (a, b) = (&a.runs[0], &b.runs[0]);
+        assert_eq!(a.results, b.results);
+        assert_eq!(a.logical[1], b.logical[1]);
+        assert_ne!(a.logical[0], b.logical[0]);
+        assert_eq!(b.logical[0].fqn, atoms.get_id("fresh").unwrap());
     }
 
     #[test]
@@ -957,9 +1108,62 @@ mod tests {
         let path = dir.path().join("a.sarif");
         std::fs::write(&path, serde_json::to_vec(&two_runs).unwrap()).unwrap();
         let mut atoms = Atoms::new();
-        let runs = read_runs(&path, &mut atoms).unwrap();
-        assert_eq!(runs.len(), 2);
-        assert_eq!(runs[0], runs[1]);
-        assert_eq!(runs[0], parse(&doc(), &mut atoms).unwrap()[0]);
+        let parsed = read_runs(&path, &mut atoms).unwrap();
+        let one = parse(&doc(), &mut atoms).unwrap();
+        assert_eq!(parsed.runs.len(), 2);
+        assert_eq!(parsed.runs[0], parsed.runs[1]);
+        assert_eq!(parsed.runs[0], one.runs[0]);
+        // Each run's rows, pooled and sorted.
+        let twice = |rows: &[String]| {
+            let mut xs = [rows, rows].concat();
+            xs.sort();
+            xs
+        };
+        assert_eq!(parsed.notifications, twice(&one.notifications));
+        assert_eq!(parsed.statuses, twice(&one.statuses));
+        assert_eq!(parsed.notifications.len(), 4);
+        assert_eq!(parsed.statuses.len(), 2);
+    }
+
+    fn notification(v: Value) -> sarif::Notification {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn notification_row_canonical() {
+        // The same keys in other orders, at the top and inside a property's value.
+        let x = notification(json!({
+            "level": "warning",
+            "descriptor": {"id": "D"},
+            "message": {"id": "m", "text": "t"},
+            "properties": {"p": {"b": 1, "a": {"y": 2, "x": [3, 1]}}}
+        }));
+        let y = notification(json!({
+            "properties": {"p": {"a": {"x": [3, 1], "y": 2}, "b": 1}},
+            "message": {"text": "u", "id": "m"},
+            "descriptor": {"id": "D"},
+            "level": "warning"
+        }));
+        let want = r#"{"descriptor":{"id":"D"},"level":"warning","message":{"id":"m"},"properties":{"p":{"a":{"x":[3,1],"y":2},"b":1}}}"#;
+        assert_eq!(notification_row(&x), want);
+        assert_eq!(notification_row(&y), want);
+        // An array's order is kept.
+        let z = notification(json!({
+            "level": "warning",
+            "descriptor": {"id": "D"},
+            "message": {"id": "m", "text": "t"},
+            "properties": {"p": {"b": 1, "a": {"y": 2, "x": [1, 3]}}}
+        }));
+        assert_ne!(notification_row(&x), notification_row(&z));
+    }
+
+    #[test]
+    fn status_row_absent_exit_code() {
+        let status = |v: Value| status_row(&serde_json::from_value(v).unwrap());
+        let absent = status(json!({"executionSuccessful": true}));
+        let zero = status(json!({"executionSuccessful": true, "exitCode": 0}));
+        assert_eq!(absent, r#"{"executionSuccessful":true}"#);
+        assert_eq!(zero, r#"{"executionSuccessful":true,"exitCode":0}"#);
+        assert_ne!(absent, zero);
     }
 }
