@@ -352,6 +352,14 @@ printer shows them. Files whose steps have neither compare exactly as before.
     cargo test -p ctadl-ascent --test integration diff_query
     cargo fmt --all -- --check && cargo clippy --workspace -- -Dwarnings
 
+**As built** (`320217261`). The new field of `Error::Property` is `on_step: bool`; a new
+`step_prop` checks the type itself and builds the step error, rather than going through
+`string`. In `tests.rs`, `flow` keeps its signature and a new `flow_with` takes a bag per step,
+with a `step_props(insn, callee)` helper. Beyond the plan: `kept_fields_matter` also changes
+and removes step 1's `callee`, `drops_unread_fields` also removes `other`, and
+`step_properties_compared` also checks that removing either property alone is reported and
+that another instruction id or an unread step property is not.
+
 ## Phase 5: metamorphic tests on real output (R13, R10)
 
 Depends on: 3, 4.
