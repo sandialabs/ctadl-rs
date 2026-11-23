@@ -31,10 +31,11 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
   is therefore almost always the `call-arg` one, which does not know which callee is entered.
   A return edge's step is written before the `call-arg` step for its destination, so a return
   step is the edge's.
-- An interior `call-arg` vertex is on the path for one of three reasons: a call edge leaves
-  it; an intra edge joins it to another `call-arg` vertex of the same call (the call is
-  crossed by a summary or a propagation model, not entered); or the path only passes through
-  it.
+- The path reaches the `call-arg` vertex whose step is written by a copy from the actual. It
+  then leaves by a call edge into a callee, or by an edge that stands for the call's effect
+  (a summary or a propagation model): to another `call-arg` vertex of the same call, or to a
+  global the callee writes. It cannot go back to the actual: the alias hop is not taken
+  after a copy (`search.rs:462`).
 - "A callee of a call site" is looked up in `call_callee` (`formatter.rs:2571`), a map built
   by collecting `facts.call`. A site with several callees keeps the one that comes last in
   `facts.call`, which is the static calls followed by the calls the index resolved
@@ -67,8 +68,7 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
 | **The site's callees** | Every function the final call graph gives a call site. |
 | **Call step** | A step at a call the path enters: a call edge leaves the step's vertex, or the step is the call edge's own. |
 | **Return step** | A step written for a return edge. |
-| **Summarized step** | A step at a call the path crosses without entering: an intra edge of the path joins the step's `call-arg` vertex to another `call-arg` vertex of the same call. |
-| **Pass-through step** | An interior `call-arg` step that is neither a call step nor a summarized step. |
+| **Summarized step** | A step for an interior `call-arg` vertex that is not a call step: the path crosses the call without entering a callee. |
 
 ## Requirements
 
@@ -86,11 +86,12 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
 - R4. **`summarized` on a summarized step.** A summarized step has `summarized: true` and no
   `callees`: nothing records which callee's summary carried the taint. No other step has
   `summarized`.
-- R5. **A pass-through step** has `taintVertex` only.
+- R5. **Every step says something about callees.** Every step has `callees` or
+  `summarized`, never both.
 - R6. **By content.** No step property depends on function ids or on the order of the call
   list. The instruction id in a `call-arg` vertex is the one id a property holds.
 - R7. **Messages.** A call step's message names the function the path enters. A return
-  step's message is unchanged. Where a source, sink, summarized or pass-through step's
+  step's message is unchanged. Where a source, sink or summarized step's
   message names a callee, it names the site's callee whose name sorts first.
 - R8. **Steps do not change.** Which steps a flow has, their order, locations, `kinds` and
   `executionOrder` are what they were. A step that was not written is still not written, and
@@ -128,7 +129,9 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
   `--endpoints-only`. Renumbered instruction ids and a reordered `callees` are not.
 - R17. **What each step says is tested.** Tests check the properties of each kind of step: a
   call step at a site with two callees, of which the path enters one; a return step; a
-  summarized step; a source or sink step at a site with two callees.
+  summarized step, both between two arguments and into a global; a source or sink step at a
+  site with two callees. On every flow the tests query, each step has `callees` or
+  `summarized`.
 - R18. **Documents.** `docs/debugging.md` (`:259`), the `diff-query` help text
   (`ctadl-ascent/src/main.rs:93`) and `docs/spec.md` (§5, `:261`) no longer say the
   properties are not written, and name `callees` and `summarized` where they named `callee`.
@@ -153,14 +156,12 @@ about the vertex.
 | call | its vertex | the function entered | | that function |
 | return | the edge's destination | the edge's origin's function | | the destination's function |
 | summarized | the `call-arg` vertex | | `true` | the site's first callee by name, else the enclosing function |
-| pass-through | the `call-arg` vertex | | | as summarized |
 
 The step for an interior `call-arg` vertex (`formatter.rs:2959`) is classified by the path
 edge that leaves the vertex, which the walk has in hand as the next window:
 
 - a call edge: a call step; the function entered is the edge's destination's function;
-- an intra edge to a `call-arg` vertex of the same instruction: a summarized step;
-- anything else, or no next edge: a pass-through step.
+- anything else: a summarized step.
 
 A step written for a call edge itself (`formatter.rs:2920`), when it is not dropped, is a
 call step by the same rule. Its `kinds` stay as they are in every case.

@@ -15,8 +15,8 @@ structured step properties, which `diff-query` then compares: `taintVertex`, a s
   one.
 - A source or sink step's `callees` is every callee of its call site. The endpoint does not
   record which of them its model named.
-- A step at a call the path crosses by a summary, without entering a callee, has
-  `summarized: true` and no `callees`: nothing records which callee's summary carried the
+- Any other step at a call inside the flow is one the path crosses by a summary, without
+  entering a callee. It has `summarized: true` and no `callees`: nothing records which callee's summary carried the
   taint. `diff-query` compares the flag.
 
 Which steps a flow has does not change. A flow has one source and one sink endpoint, but
