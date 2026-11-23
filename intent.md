@@ -13,8 +13,10 @@ structured step properties, which `diff-query` then compares: `taintVertex`, a s
   function returned into, the caller (`formatter.rs:2920`).
   A call site with several callees does not change either: the edge the path traverses names
   one.
-- A source or sink step's `callees` is every callee of its call site. The endpoint does not
-  record which of them its model named.
+- A source or sink step has `taintVertex` only. Every callee of its call site is written
+  once, in the result's `sourceFunctions` or `sinkFunctions`, which `diff-query` already
+  compares; the step does not repeat the list. The endpoint does not record which of them
+  its model named.
 - Any other step at a call inside the flow is one the path crosses by a summary, without
   entering a callee. It has `summarized: true` and no `callees`: nothing records which callee's summary carried the
   taint. `diff-query` compares the flag.

@@ -81,13 +81,13 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
   function the path enters. A return step's `callees` is one name, the function returned
   from, which the step's message does not name. The other callees of the site are not
   listed.
-- R3. **`callees` on a source or sink step.** A source or sink step's `callees` is the names
-  of the site's callees, each once, sorted.
+- R3. **A source or sink step has `taintVertex` only.** The callees of its call site are in
+  the result's `sourceFunctions` or `sinkFunctions` (R9) and are not repeated on the step.
 - R4. **`summarized` on a summarized step.** A summarized step has `summarized: true` and no
   `callees`: nothing records which callee's summary carried the taint. No other step has
   `summarized`.
-- R5. **Every step says something about callees.** Every step has `callees` or
-  `summarized`, never both.
+- R5. **Every interior step says something about callees.** Every step but a source or sink
+  step has `callees` or `summarized`, never both.
 - R6. **Ids.** `callees` and `summarized` do not depend on function ids, instruction ids or
   the order of the call list. `taintVertex` holds one index-local number, the instruction id
   in a `call-arg` vertex, as the result property of that name does; `diff-query` drops it
@@ -132,7 +132,8 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
 - R17. **What each step says is tested.** Tests check the properties of each kind of step: a
   call step at a site with two callees, of which the path enters one; a return step; a
   summarized step, both between two arguments and into a global; a source or sink step at a
-  site with two callees. On every flow the tests query, each step has `callees` or
+  site with two callees, whose result's `sourceFunctions` or `sinkFunctions` holds both. On
+  every flow the tests query, each step but the source and sink steps has `callees` or
   `summarized`.
 - R18. **Documents.** `docs/debugging.md` (`:259`), the `diff-query` help text
   (`ctadl-ascent/src/main.rs:93`) and `docs/spec.md` (§5, `:261`) no longer say the
@@ -154,7 +155,7 @@ about the vertex.
 
 | Step | `taintVertex` | `callees` | `summarized` | Message names |
 | --- | --- | --- | --- | --- |
-| source, sink | endpoint vertex | the site's callees | | their first by name |
+| source, sink | endpoint vertex | | | the site's first callee by name |
 | call | its vertex | the function entered | | that function |
 | return | the edge's destination | the edge's origin's function | | the destination's function |
 | summarized | the `call-arg` vertex | | `true` | the site's first callee by name, else the enclosing function |
@@ -176,7 +177,7 @@ Invariant: the dedup test (`formatter.rs:2847`) does not read the new value. Whe
 is written depends on what it did before (R8). A dropped step's classification is lost with
 it: when a summarized crossing's first `call-arg` step is dropped, the call is not marked.
 
-### D2. The site's callees (R3, R6, R7, R9)
+### D2. The site's callees (R6, R7, R9)
 
 `call_callee` (`formatter.rs:2571`) becomes a map from a site to its callees, sorted by name
 and then deduplicated by name. Names come from `facts.id_to_name`; a function with no name
@@ -187,8 +188,8 @@ takes the `func#<id>` text the message already uses. The map holds one entry per
 that want one function keep it: step messages and the source and sink results
 (`formatter.rs:3328`). A path result's `sourceFunctions` and `sinkFunctions`
 (`formatter.rs:3210`) take the whole list, so they no longer depend on the order of the call
-list (R14). An endpoint step exists only for an endpoint with a call site, and that site was
-chosen from the call list, so its `callees` is never empty.
+list (R14). That list is where an endpoint's callees are written, once per result; the
+endpoint's step does not repeat it (R3).
 
 ### D3. `callees` and `summarized` in `diff-query` (R11–R13, R15)
 
