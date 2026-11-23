@@ -425,6 +425,14 @@ combination. `sarif_with_a_result_removed` (`:1561`) becomes a helper that takes
     cargo test -p ctadl-ascent --test integration diff_query
     cargo fmt --all -- --check && cargo clippy --workspace -- -Dwarnings
 
+**As built** (`9695e2ac2`). 16 `diff_query` tests (was 13); no test found a bug. A shared
+`totals(report)` gives the six differing counts, and `assert_reported` asserts them as
+`[in_a, in_b, 0, 0, 0, 0]`; `bases(profile)` gives the two bases. A level edit sets `warning`,
+or `note` where the level is already `warning`, so it always changes the file. The three new
+tests also run each edit under `--endpoints-only`. `sarif_with_a_result_removed` became
+`sarif_edited(edit)`, which also asserts the edit changed the file. Each new or widened
+assertion was checked to fail under a deliberately broken edit.
+
 ## Phase 6: documents and help text (R15)
 
 Depends on: 3, 4.
