@@ -87,7 +87,8 @@ precision, scale and room to try new analysis ideas outrank a stable interface.
 
 - F12. Inspect the store, print imported IR, report call-graph statistics, and dump the index
   and taint graphs (Graphviz). Compare two index runs table by table, by content
-  (`ctadl diff-index`), and the results of two SARIF files, by content (`ctadl diff-query`).
+  (`ctadl diff-index`), and two SARIF files by content: their results, execution notifications
+  and invocation status (`ctadl diff-query`).
 - F13. Run import, index and query in one command (`ctadl go`).
 
 ### 3.2 Non-functional
@@ -253,9 +254,13 @@ inspectable with DuckDB; see [debugging.md](debugging.md)).
   renumbered function, instruction, span and import ids, and opposite interning orders report
   no difference; a deleted row or two swapped call targets are reported as exactly that.
 - Metamorphic tests of `ctadl diff-query` on real `ctadl query` output in every SARIF profile:
-  shuffled arrays, renumbered logical locations, renumbered instruction and function ids, and
-  changed message text report no difference; a deleted or duplicated result, two swapped steps
-  of a flow and a changed line are reported as exactly that.
+  shuffled arrays (notifications included), renumbered logical locations, renumbered
+  instruction and function ids, and changed message text (notifications' included) report no
+  difference; a deleted or duplicated result, two swapped steps of a flow, a changed line, a
+  notification's changed level or property, and a changed `executionSuccessful` or `exitCode`
+  are reported as exactly that. With step properties added to that output, renumbered
+  instruction ids in them report no difference and a changed `taintVertex` or `callee` is
+  reported, at an interior step only without `--endpoints-only`.
 
 ## 6. Known limitations
 
