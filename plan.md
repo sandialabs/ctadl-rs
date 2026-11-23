@@ -1,7 +1,7 @@
 # Step properties written by `ctadl query`: implementation plan - DO-NOT-MERGE
 
-Source: `intent.md`, `spec.md`. This orders the work of writing `taintVertex`, `callees` and
-`summarized` on each step and of reading them in `diff-query`. R*/D* numbers are the spec's;
+Source: `intent.md`, `spec.md`. This orders the work of writing `taintVertex`, and `callee` or
+`summarized`, on each step and of reading them in `diff-query`. R*/D* numbers are the spec's;
 the spec wins where the two disagree, except for the corrections below. Each phase builds,
 passes the gate named in it, and is one commit.
 
@@ -22,7 +22,7 @@ No code, comment, help text or document may cite a number from the spec or from 
 | Wave | Phases | Why |
 | --- | --- | --- |
 | 0 | 0 | baseline on the unchanged tree |
-| 1 | 1, 3 | 1 states the verified step with `callees` and `summarized`; 3 changes the callees of a site in the formatter; disjoint files |
+| 1 | 1, 3 | 1 states the verified step with `summarized`; 3 changes the callees of a site in the formatter; disjoint files |
 | 2 | 2, 4, 5 | 2 proves 1's statements; 4 needs 1's types; 5 needs 3's map; disjoint files |
 | 3 | 6 | needs the properties 5 writes and the reader 4 changes |
 | 4 | 7 | documents and acceptance; needs 2's proofs complete |
@@ -33,7 +33,8 @@ only proves. So a Verus failure is about a statement in 1 and about a proof in 2
 changes results only at call sites with several callees, and removes two result properties;
 phase 5 only adds step properties and changes a call step's message at such a site. So a
 regression delta after 3 is about which callee is named, and after 5 about steps. Phase 4
-changes what `diff-query` reads while the tests still add step properties themselves; phase 6
+makes `diff-query` read `summarized` while the tests still add step properties themselves;
+phase 6
 then moves those tests onto the real output. Phases 1 and 4 both edit
 `ctadl-query-diff/src/parse.rs` and `render.rs`, and phases 4 and 6 both edit
 `ctadl-ascent/tests/integration/diff_query.rs`; each pair is in different waves. In wave 2,
@@ -67,70 +68,57 @@ Depends on: nothing.
 
 **Gate.** The three commands pass; the baseline directory holds the SARIF files. No commit.
 
-## Phase 1: statements for `callees` and `summarized` (R16, D3)
+## Phase 1: statements for `summarized` (R16, D3)
 
 Depends on: 0.
 
-**What.** The raw and the canonical step hold `callees`, an optional bag of atoms, and
-`summarized`, an optional boolean, in place of `callee`. This phase writes the types, the
-definitions, the contracts and the theorems' definitions for them, and smoke tests of those
-statements. The executable code is the real code, since `cargo test` runs it: it is a few
-lines per function. A proof that no longer goes through is admitted (`admit()`), and each
-admit is listed in the commit message. `diff-query` reports what it did: the parser still
-reads `callee`, and hands it over as a one-name `callees`.
+**What.** The raw and the canonical step get `summarized`, an optional boolean, beside
+`callee`. This phase writes the types, the definitions, the contracts and the theorems'
+definitions for it, and smoke tests of those statements. The executable code is the real
+code, since `cargo test` runs it: it is a line or two per function. A proof that no longer
+goes through is admitted (`admit()`), and each admit is listed in the commit message.
+`diff-query` reports what it did: the parser sets `summarized` to `None`.
 
 **Files.**
-- `sarif-canon/src/types.rs:133` — `RawStep`: `callees: Option<Vec<A>>` ("`properties.callees`,
-  a bag") and `summarized: Option<bool>` in place of `callee`; the same in `CanonStep`
-  (`:186`, its `callees` sorted), `RawStepV` (`:267`) and `CanonStepV` (`:296`) with
-  `Option<Seq<A>>`; the views at `:376`, `:421`.
-- `sarif-canon/src/canon.rs:55` — `spec_canon_step`: `callees` is
-  `spec_canon_atoms(oa, s.callees)`, as a result's `source_fns` is (`:144`); `summarized` is
-  copied. `canon_step` (`:765`) does the same with `canon_opt_atoms` (`:946`); its contract
-  is unchanged in form: it returns `spec_canon_step`.
-- `sarif-canon/src/order.rs:169` — `ord_step` compares `callees` with `ord_opt_atoms`
-  (`:147`) and then `summarized` by an order on an optional boolean (absent, `false`,
-  `true`), a new definition. `cmp_step` (`:1258`) computes it; the lemma at `:518` that
-  `ord_step` is a strict total order keeps its statement. The model in the tests (`:1436`,
-  `:1548`, `:1632`) gets the two fields.
-- `sarif-canon/src/prims.rs:523`, `:837` — `copy_step` copies both fields; its contract
+- `sarif-canon/src/types.rs:134` — `RawStep` gets `summarized: Option<bool>`
+  ("`properties.summarized`"); the same in `CanonStep` (`:186`), `RawStepV` (`:267`) and
+  `CanonStepV` (`:296`); the views at `:376`, `:421`.
+- `sarif-canon/src/canon.rs:55` — `spec_canon_step` copies `summarized` in both arms;
+  `canon_step` (`:765`) does the same; its contract is unchanged in form: it returns
+  `spec_canon_step`.
+- `sarif-canon/src/order.rs:169` — `ord_step` compares `summarized` after `callee`, by an
+  order on an optional boolean (absent, `false`, `true`), a new definition. `cmp_step`
+  (`:1258`) computes it; the lemma at `:518` that `ord_step` is a strict total order keeps
+  its statement. The model in the tests (`:1436`, `:1548`, `:1632`) gets the field.
+- `sarif-canon/src/prims.rs:523`, `:837` — `copy_step` copies the field; its contract
   (`r@ == s@`) is unchanged.
-- `sarif-canon/src/theorems.rs:91` — `step_permuted`: `opt_atoms_permuted(x.callees,
-  y.callees)` and `x.summarized == y.summarized` in place of `x.callee == y.callee`. `:162` —
-  `step_renumbered`: both equal. No theorem signature changes
+- `sarif-canon/src/theorems.rs:91` — `step_permuted` gets `x.summarized == y.summarized`;
+  `:162` — `step_renumbered` gets the same. No theorem signature changes
   (`theorem_canon_invariant`, `:1132`; `theorem_diff_empty_iff_equal`, `:1160`).
-- `sarif-canon/src/smoke.rs` — the step builders (`:90`, `:221`, `:896`, `:900`) take the two
-  fields; the smoke tests below.
-- `sarif-canon/src/u32_atoms.rs`, `canon.rs` tests (`:1240`, `:1293`) — the two fields where
-  a step is built.
-- `ctadl-query-diff/src/parse.rs:229` — `callees` is the `callee` string as a one-element
-  list, `summarized` is `None`; tests at `:725`, `:744`, `:751` follow. `render.rs:99` prints
-  the one name as `callee`. Both are replaced in phase 4.
+- `sarif-canon/src/smoke.rs` — the step builders (`:90`, `:221`, `:896`, `:900`) take the
+  field; the smoke tests below.
+- `ctadl-query-diff/src/parse.rs:229` — `summarized: None`; the expected steps in its tests
+  (`:725`, `:744`, `:751`) follow. Replaced in phase 4.
 
 **Tests.**
 - Smoke, in `smoke.rs`, using no admitted fact:
   - not vacuous: `smoke_permuted_bags_holds` (`:1249`) and `smoke_renumbered_holds` (`:1274`)
-    on steps that have a two-name `callees`, written in different orders in the two runs for
-    the first, and a `summarized`;
-  - passes: the canonical step of `callees: [b, a]` has `[a, b]`; `summarized: Some(true)`
-    is kept; `None` stays `None` for both;
-  - fails: two runs that differ only in a step's `callees` (`[a]` and `[b]`; `[a]` and
-    `[a, a]`; `Some([])` and `None`) have different canonical forms and are not
-    `step_permuted`; the same for `summarized` (`Some(true)`, `Some(false)`, `None`); the
-    test at `:1197` restated for `callees`.
-- Existing, still passing unchanged: `cargo test --workspace` (the `diff-query` tests see no
-  change).
+    on steps of which one has `summarized: Some(true)`;
+  - passes: the canonical step keeps `Some(true)`, `Some(false)` and `None` as they are;
+  - fails: two runs that differ only in a step's `summarized` (`Some(true)` and `None`;
+    `Some(true)` and `Some(false)`) have different canonical forms, and are neither
+    `step_permuted` nor `step_renumbered`, beside the test at `:1197` for `callee`.
+- Existing, still passing unchanged: `cargo test --workspace`.
 - Verus: `scripts/verus.sh .` verifies, with the admits listed.
 
 **Gate.** `cargo fmt --all -- --check`; `cargo clippy --workspace -- -Dwarnings`;
 `cargo test --workspace`; `scripts/verus.sh .`;
-`grep -n '\bcallee\b' sarif-canon/src/*.rs` finds only `types.rs:68`;
 `git diff <phase 0 commit> -- sarif-canon/src/theorems.rs` changes no `theorem_` signature.
 
 **Review.** The user checks the statements (the types, `spec_canon_step`, `ord_step`,
 `step_permuted`, `step_renumbered` and the smoke tests) against the spec before wave 2.
 
-## Phase 2: proofs for `callees` and `summarized` (R16)
+## Phase 2: proofs for `summarized` (R16)
 
 Depends on: 1.
 
@@ -142,14 +130,10 @@ cannot be proved, stop and report; the change is the user's call. No behavior ch
 **Files.**
 - `sarif-canon/src/order.rs` — the order on an optional boolean is a strict total order;
   `ord_step` is one (`:518`); `cmp_step` computes it.
-- `sarif-canon/src/canon.rs` — `canon_step` returns `spec_canon_step`.
-- `sarif-canon/src/theorems.rs` — the step case of the permutation lemma uses
-  `lemma_opt_atoms_permuted` (`:665`) for `callees`; the renumbering case is equality.
-- `sarif-canon/src/prims.rs` — whatever of `copy_step` and the lemmas about steps was
-  admitted.
+- `sarif-canon/src/canon.rs`, `prims.rs`, `theorems.rs` — whatever about steps was admitted.
 
 **Tests.**
-- Verus: `scripts/verus.sh .` verifies with no admit.
+- Verus: `scripts/verus.sh .` verifies with no new admit.
 - Existing, still passing: `cargo test -p sarif-canon`.
 
 **Gate.** `cargo fmt --all -- --check`; `cargo clippy --workspace -- -Dwarnings`;
@@ -209,52 +193,40 @@ properties are not written yet.
 `cargo test --workspace`; `cargo xtask regression`;
 `grep -n 'sourceCallee\|sinkCallee' ctadl-ascent/src` finds nothing.
 
-## Phase 4: `diff-query` reads `callees` and `summarized` (R12, R13, R14, D3)
+## Phase 4: `diff-query` reads `summarized` (R12, R13, R14, D3)
 
 Depends on: 1.
 
-**What.** `step` reads `callees` and `summarized` in place of `callee`. It hands `callees`
-to the canonical step with repeated names dropped, and `summarized` as written; the verified
-code sorts `callees`. The renderer prints both under `properties`. `sarif-canon` does not
-change. This changes behavior for files with step `callee`, `callees` or `summarized`;
-`ctadl query` writes none of them before phase 5, so on its own output nothing changes.
+**What.** `step` reads `summarized` beside `taintVertex` and `callee`, and the renderer
+prints it under `properties`. `sarif-canon` does not change. This changes behavior only for
+files with a step `summarized`; `ctadl query` writes none before phase 5.
 
 **Files.**
-- `ctadl-query-diff/src/parse.rs:228` — `step` reads the two properties. `callees` must be
-  an array of strings and `summarized` a boolean, else `Error::Property` with `on_step: true`
-  and `expected` `"a list of strings"` or `"a boolean"`. Intern each name and drop an atom
-  already in the list. `step_prop` (`:235`) stays for `taintVertex`.
-- `ctadl-query-diff/src/render.rs:99` — print `callees` (a list, kept when empty) and
-  `summarized` under `properties`; update the module comment at `:5`.
-- `ctadl-query-diff/src/parse.rs` tests (`:540`, `:558`, `:885`, `:926`, `:1123`) and
-  `ctadl-query-diff/src/tests.rs` (`:97`, `:290`, `:530`, `:590`–`:612`, `:674`) — write
-  `callees` lists where they wrote `callee`.
-- `ctadl-ascent/tests/integration/diff_query.rs:199` — `with_step_props` writes
-  `"callees": ["callee_<k>"]`; `changed_step_property` (`:1160`) edits `callees[0]`, and its
-  renumbering loop (`:1196`) rewrites only string values. The module comment at `:5` names
-  `callees`. The helper itself stays until phase 6.
+- `ctadl-query-diff/src/parse.rs:228` — `step` reads `summarized`: a boolean, else
+  `Error::Property` with `on_step: true` and `expected` `"a boolean"`; absent is `None`.
+  `step_prop` (`:235`) is unchanged.
+- `ctadl-query-diff/src/render.rs:99` — print `summarized` under `properties` when present;
+  update the module comment at `:5`.
+- `ctadl-ascent/tests/integration/diff_query.rs:1196` — the renumbering loop of
+  `changed_step_property` rewrites only string values, so it keeps working once real steps
+  have a boolean (phase 5 lands in the same wave; `with_step_props` still overwrites the
+  bag until phase 6).
 
 **Tests.**
 - New, `ctadl-query-diff/src/tests.rs`:
-  - `callees_compared_as_a_set` — `["a","b"]` against `["b","a"]` and against
-    `["a","b","a"]` is `IDENTICAL`; against `["a"]` and against `["a","c"]` is `DIFFERENT`
-    with one row each side.
   - `summarized_compared` — `summarized: true` against absent, and against
-    `summarized: false`, is `DIFFERENT`; against itself `IDENTICAL`.
-  - `absent_is_not_empty` — `callees: []` against no `callees` is `DIFFERENT`.
-  - `callee_not_read` — two files that differ only in a step's `callee` are `IDENTICAL`; a
-    step `callee` that is a number is accepted.
-  - `endpoints_only_reads_first_and_last` — a changed `callees` or `summarized` on an
-    interior step is `IDENTICAL` with `--endpoints-only` and `DIFFERENT` without; on the last
-    step, `DIFFERENT` with it.
-  - Malformed, extending the test at `:674`: `callees` as `"snk"`, `[1]`, `{}`, `null`, and
-    `summarized` as `"true"`, `1`, `null`, each exit 2 with the property named.
-  - Printed form, extending `:290`: a row shows
-    `"properties":{"callees":["a","b"],"summarized":true,"taintVertex":...}` with only the
-    keys present.
-- New, `parse.rs` tests: `callees: ["b","a","b"]` parses to the two atoms `b`, `a`;
-  `summarized` to `Some(true)` or `Some(false)`; a step with neither to `None` and `None`.
-- Existing, still passing: the rest of `cargo test --workspace`.
+    `summarized: false`, is `DIFFERENT` with one row each side; against itself `IDENTICAL`.
+  - `endpoints_only_reads_first_and_last` — a changed `callee` or a removed `summarized` on
+    an interior step is `IDENTICAL` with `--endpoints-only` and `DIFFERENT` without; on the
+    last step, `DIFFERENT` with it.
+  - Malformed, extending the test at `:674`: `summarized` as `"true"`, `1`, `null`, each
+    exit 2 with the property named.
+  - Printed form, extending `:290`: a row shows `"summarized":true` under `properties`, and
+    only the keys present.
+- New, `parse.rs` tests: `summarized` parses to `Some(true)` or `Some(false)`; a step
+  without it to `None`.
+- Existing, still passing unchanged: the rest of `cargo test --workspace`, including every
+  test that writes a step `callee`.
 
 **Gate.** `cargo fmt --all -- --check`; `cargo clippy --workspace -- -Dwarnings`;
 `cargo test --workspace`; `git diff --stat <phase 1 commit> -- sarif-canon` is empty.
@@ -264,7 +236,7 @@ change. This changes behavior for files with step `callee`, `callees` or `summar
 Depends on: 3.
 
 **What.** One small value describes a step before it is written: its vertex, what it says
-about callees (one name, `summarized`, or nothing), and the function its message names.
+about its callee (a name, `summarized`, or nothing), and the function its message names.
 `push_site_step` takes it in place of the message string and renders the message and the
 property bag from it. This adds `properties` to every step and changes the message of a call
 step at a site with several callees. Which steps are written, their order, locations, `kinds`
@@ -275,18 +247,18 @@ and `executionOrder` do not change: the dedup test does not read the new value.
   (`<variable><path>`) into one function; use it there, at `:3178`, and for every step.
 - `formatter.rs:2801` — `push_site_step` takes the step value and the message's leading word;
   builds the message `<word> <vertex> in <function>` and a `PropertyBag` with `taintVertex`,
-  and `callees` (a one-element list) or `summarized: true` when the value has them; sets it
+  and `callee` or `summarized: true` when the value has one; sets it
   on the `ThreadFlowLocation` (`:2857`). The test at `:2845`–`:2850` is not edited.
 - `formatter.rs:2869`, `:2987` — source and sink steps: vertex only; the message names the
   site's first callee, as after phase 3.
-- `formatter.rs:2920` — the edge's step. A call edge: `callees` is the destination's
-  function. A return edge: `callees` is the origin's function (`id_to_node[src_id].0`); the
+- `formatter.rs:2920` — the edge's step. A call edge: `callee` is the destination's
+  function. A return edge: `callee` is the origin's function (`id_to_node[src_id].0`); the
   message keeps naming the destination's. `site_by_edge` holds call and return edges only
   (`ctadl-index/src/facts.rs:1745`); if the third arm of the `match` at `:2924` can be
   reached, stop and report.
 - `formatter.rs:2959` — the interior `call-arg` step. Walk with the index of the window so
   the next window is in hand. When the edge leaving `dst_id` (`edge_by_edge` at
-  `(dst_id, path[i + 2])`) is a call edge, the step is a call step: `callees` and the message
+  `(dst_id, path[i + 2])`) is a call edge, the step is a call step: `callee` and the message
   name `id_to_node[path[i + 2]].0`. Otherwise, or when there is no next window, it is a
   summarized step: `summarized: true`, and the message is what it was after phase 3.
 - New fixtures under `ctadl-ascent/tests/tnt/` (see Tests).
@@ -299,27 +271,28 @@ way `cli.rs:223` runs a `.tnt` fixture:
   indirect call that resolves to `get_a` and `get_b` (as
   `ctadl-ascent/tests/tnt/funcptr_two_targets.tnt` does), with the sink one call further
   down in each. The flow into `sink_a` has a step at the indirect call with
-  `callees == ["get_a"]` whose message ends ` in get_a`; the flow into `sink_b` has
-  `["get_b"]`. Neither has `summarized`.
+  `callee == "get_a"` whose message ends ` in get_a`; the flow into `sink_b` has
+  `"get_b"`. Neither has `summarized`.
 - `return_step_names_the_function_returned_from` — a source inside a callee whose value
-  returns to the caller and reaches a sink there: the `return` step's `callees` is the
+  returns to the caller and reaches a sink there: the `return` step's `callee` is the
   callee, and its message ends with the caller.
 - `summarized_step_between_arguments` — a call that copies one argument to another, crossed
   by a summary (C's `xfer.c` shape, in `.tnt`): the step has `summarized: true`, no
-  `callees`.
+  `callee`.
 - `summarized_step_into_global` — a callee that writes its argument to a global a sink reads:
-  the step at the call has `summarized: true`, no `callees`.
+  the step at the call has `summarized: true`, no `callee`.
 - `endpoint_step_at_two_callees` — in `step_props_two_callees.tnt`, a sink directly on the
   formal of both targets is anchored at the indirect call: its step has `taintVertex` only,
   its message names `get_a`, and the result's `sinkFunctions` is `["get_a", "get_b"]`.
-- `every_step_has_a_vertex_and_interior_steps_say_callees` — over every flow of every fixture
+- `every_step_has_a_vertex_and_interior_steps_say_callee` — over every flow of every fixture
   above and of `ctadl-ascent/tests/c/ties.c`: each step's `taintVertex` is the vertex in its
   message; each step whose message does not start with `source ` or `sink ` has exactly one
-  of `callees` (one name) and `summarized` (`true`); each source or sink step has neither.
+  of `callee` (a string) and `summarized` (`true`); each source or sink step has neither.
 - `machine_profile_has_no_steps` — the `machine` profile of the two-callee fixture has no
   `codeFlows`.
 - Existing, still passing: `cargo test --workspace`, including `diff_query.rs` unchanged
-  (the old reader ignores `callees` and `summarized`; `taintVertex` is a string).
+  (`with_step_props` still overwrites each step's bag; `taintVertex` and `callee` are
+  strings, and a reader without phase 4 ignores `summarized`).
 - Regression: counts as in phase 0. Then compare with the baseline SARIF: for each file,
   `runs[].results` with each step's `properties` and each result's `sourceCallee` and
   `sinkCallee` deleted (`jq`) is equal to the baseline's, except in results at a call site
@@ -341,12 +314,12 @@ with the two callees' function ids in opposite orders. Tests only.
   `Base::step_props` and the second base; `bases` returns the real file. Restate the module
   comment (`:9`–`:13`).
 - `diff_query.rs:958` (`endpoints_only`) — the `taintVertex` checks at `:1019`–`:1036` run on
-  the real file in the profiles that have flows; add a changed `callees` and a removed
+  the real file in the profiles that have flows; add a changed `callee` and a removed
   `summarized` at an interior step (reported without `--endpoints-only`, not with it), on a
   flow that has such a step.
 - `diff_query.rs:1160` (`changed_step_property`) — runs on the real file: the first step's
-  `taintVertex`; the first step that has `callees`, its name changed; a `summarized` removed.
-  A `callees` list reversed, and one with an entry repeated, report nothing. Renumbered
+  `taintVertex`; the first step that has `callee`, its name changed; a `summarized` removed.
+  Renumbered
   instruction ids in `taintVertex` report nothing.
 - `diff_query.rs:757` (`renumbered_ids`) — unchanged code; it now covers step properties for
   `ties.c`. Add the same test for the two-callee fixture, with a helper next to `renumbered`
@@ -386,20 +359,20 @@ comments.
 
 **Files.**
 - `docs/debugging.md:257`–`:260` — a step is compared by `kinds`, location, `taintVertex`,
-  `callees` (as a set) and `summarized`; drop "does not write these yet". Add which step has
-  which property; that a return step's `callees` is the function returned from while its
+  `callee` and `summarized`; drop "does not write these yet". Add which step has
+  which property; that a return step's `callee` is the function returned from while its
   message names the caller; that a summarized step names no callee; and when a flow's first
   or last step is not its source or sink step (the sink step dropped at the instruction of
   the step before it; an endpoint with no call site has no step), so `--endpoints-only`
   compares the step that is there.
 - `docs/debugging.md:271` — `sourceCallee` and `sinkCallee` are properties older files hold.
-  `:281`, `:293`, `:347` — `callees` and `summarized` where they say `callee`; the error list
-  names a `callees` that is not a list of strings and a `summarized` that is not a boolean.
-- `ctadl-ascent/src/main.rs:92`–`:93` — the help text names `callees` and `summarized` and
+  `:281`, `:293`, `:347` — `summarized` beside `callee`; the error list names a `summarized`
+  that is not a boolean.
+- `ctadl-ascent/src/main.rs:92`–`:93` — the help text names `summarized` beside `callee` and
   drops the parenthesis.
 - `docs/spec.md:261`–`:263` (§5) — the tests run on the properties `ctadl query` writes; name
-  `callees` and `summarized`. `docs/spec.md:219` (§4.5) — a step carries `taintVertex`, and
-  `callees` or `summarized`.
+  `summarized`. `docs/spec.md:219` (§4.5) — a step carries `taintVertex`, and `callee` or
+  `summarized`.
 - `sarif-canon/src/types.rs:68` — unchanged if it still reads true; check.
 - `sarif-canon/src/lib.rs:14`–`:31` — "What is proved" still reads true; check.
 
@@ -417,12 +390,12 @@ finds no citation of this plan or the spec.
 
 | File | Change | Phase |
 | --- | --- | --- |
-| `sarif-canon/src/types.rs`, `canon.rs`, `order.rs`, `prims.rs`, `theorems.rs`, `smoke.rs`, `u32_atoms.rs` | `callees` and `summarized` in the step: statements, then proofs | 1, 2 |
-| `ctadl-query-diff/src/parse.rs`, `render.rs` | the new fields filled from `callee`; then `callees` and `summarized` read and printed | 1, 4 |
-| `ctadl-query-diff/src/tests.rs` | `callees` and `summarized` tests | 4 |
+| `sarif-canon/src/types.rs`, `canon.rs`, `order.rs`, `prims.rs`, `theorems.rs`, `smoke.rs` | `summarized` in the step: statements, then proofs | 1, 2 |
+| `ctadl-query-diff/src/parse.rs`, `render.rs` | `summarized` set to `None`; then read and printed | 1, 4 |
+| `ctadl-query-diff/src/tests.rs` | `summarized` tests | 4 |
 | `ctadl-ascent/src/query_engine/formatter.rs` | site callees; then step properties | 3, 5 |
 | `ctadl-ascent/tests/integration/cli.rs` | reads `sinkFunctions` | 3 |
-| `ctadl-ascent/tests/integration/diff_query.rs` | writes `callees`; then real properties | 4, 6 |
+| `ctadl-ascent/tests/integration/diff_query.rs` | renumbering loop; then real properties | 4, 6 |
 | `ctadl-ascent/tests/integration/step_props.rs`, `main.rs` | new tests | 5 |
 | `ctadl-ascent/tests/tnt/step_props_*.tnt` | new fixtures | 5 |
 | `docs/debugging.md`, `docs/spec.md`, `ctadl-ascent/src/main.rs` | documents, help text | 7 |
@@ -441,5 +414,4 @@ Not touched: `xtask/src/assertions.rs` (its readers of message text stay);
 - R16: `scripts/verus.sh .` verifies with the admits phase 0 recorded and no other, and
   `git diff <phase 1 commit> -- sarif-canon/src` changes no statement.
 - Names that must be gone: `grep -rn 'sourceCallee\|sinkCallee' ctadl-ascent/src` and
-  `grep -rn 'with_step_props' ctadl-ascent` find nothing; `"callee"` is read nowhere in
-  `ctadl-query-diff/src` outside tests of older files.
+  `grep -rn 'with_step_props' ctadl-ascent` find nothing.
