@@ -80,7 +80,8 @@ must stay consistent with `docs/spec.md` (F9, F12, §4.5, §5) and `docs/debuggi
   first.
 - R7. **Steps do not change.** Which steps a flow has, their order, locations, `kinds` and
   `executionOrder` are what they were. A step that was not written is still not written, and
-  its vertex appears nowhere. (C1.)
+  its vertex appears nowhere. So a flow's first or last step is not always its source or sink
+  step (Background), and `--endpoints-only` then compares the step that is there.
 - R8. **Results at a site with several callees.** A `C0001` result's `sourceFunctions` and
   `sinkFunctions` hold all of the callees of its endpoints' sites, and `sourceCallee` and
   `sinkCallee` the first of each. A `C0003`/`C0004` result's message and logical location
@@ -186,7 +187,4 @@ change; the sink function they read is the site's first callee by name.
 
 ## Concerns
 
-- C1. **A flow whose first or last step is not its source or sink.** See Background. Options:
-  accept and document (assumed, R7); always write the sink step, which adds a step to some
-  existing flows; give a function-anchored endpoint a step, which needs a location for it.
-  Under `--endpoints-only` an accepted case compares an interior step in the endpoint's place.
+None open.

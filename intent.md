@@ -15,9 +15,7 @@ structured step properties, which `diff-query` then compares: `taintVertex`, a s
 - A step for a call crossed by its summary has no `callees`: nothing records which callee's
   summary carried the taint.
 
-Open question, found while writing the spec for those changes:
-
-- A flow has one source and one sink endpoint, but its first or last step is not always
-  theirs: the sink step is dropped when the step before it is at the same instruction
-  (`formatter.rs:2847`), and an endpoint with no call site gets no step. Accept it, or always
-  write the endpoint's step?
+Which steps a flow has does not change. A flow has one source and one sink endpoint, but
+its first or last step is not always theirs: the sink step is dropped when the step before
+it is at the same instruction (`formatter.rs:2847`), and an endpoint with no call site gets
+no step. That is accepted and documented.
