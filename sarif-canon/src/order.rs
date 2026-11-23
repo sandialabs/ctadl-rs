@@ -168,7 +168,13 @@ pub open spec fn ord_location<A>(oa: spec_fn(A, A) -> Ordering) -> spec_fn(
 
 pub open spec fn ord_step<A>(oa: spec_fn(A, A) -> Ordering) -> spec_fn(CanonStepV<A>, CanonStepV<A>) -> Ordering {
     |x: CanonStepV<A>, y: CanonStepV<A>|
-        then(lex(oa, x.kinds, y.kinds), ord_option(ord_location(oa), x.location, y.location))
+        then(
+            lex(oa, x.kinds, y.kinds),
+            then(
+                ord_option(ord_location(oa), x.location, y.location),
+                then(ord_opt_atom(oa, x.vertex, y.vertex), ord_opt_atom(oa, x.callee, y.callee)),
+            ),
+        )
 }
 
 pub open spec fn ord_thread_flow<A>(oa: spec_fn(A, A) -> Ordering) -> spec_fn(
@@ -510,10 +516,14 @@ pub proof fn lemma_ord_step<A>(oa: spec_fn(A, A) -> Ordering)
 {
     lemma_ord_location(oa);
     lemma_strict_opt(ord_location(oa));
+    lemma_strict_opt(oa);
     lemma_strict_lex(oa);
-    lemma_strict_pair(lex_ord(oa), ord_opt(ord_location(oa)));
-    let key = |x: CanonStepV<A>| (x.kinds, x.location);
-    lemma_pull(ord_pair(lex_ord(oa), ord_opt(ord_location(oa))), key, ord_step(oa));
+    let (ol, o1) = (ord_opt(ord_location(oa)), ord_opt(oa));
+    lemma_strict_pair(o1, o1);
+    lemma_strict_pair(ol, ord_pair(o1, o1));
+    lemma_strict_pair(lex_ord(oa), ord_pair(ol, ord_pair(o1, o1)));
+    let key = |x: CanonStepV<A>| (x.kinds, (x.location, (x.vertex, x.callee)));
+    lemma_pull(ord_pair(lex_ord(oa), ord_pair(ol, ord_pair(o1, o1))), key, ord_step(oa));
 }
 
 pub proof fn lemma_ord_thread_flow<A>(oa: spec_fn(A, A) -> Ordering)
@@ -1232,12 +1242,20 @@ pub fn cmp_step<A, F: Fn(&A, &A) -> Ordering>(
     if !is_equal(c) {
         return c;
     }
-    match (&x.location, &y.location) {
+    let c = match (&x.location, &y.location) {
         (None, None) => Ordering::Equal,
         (None, Some(_)) => Ordering::Less,
         (Some(_), None) => Ordering::Greater,
         (Some(a), Some(b)) => cmp_location(a, b, cmp, Ghost(oa)),
+    };
+    if !is_equal(c) {
+        return c;
     }
+    let c = cmp_opt_atom(&x.vertex, &y.vertex, cmp, Ghost(oa));
+    if !is_equal(c) {
+        return c;
+    }
+    cmp_opt_atom(&x.callee, &y.callee, cmp, Ghost(oa))
 }
 
 pub fn cmp_thread_flow<A, F: Fn(&A, &A) -> Ordering>(
@@ -1366,7 +1384,7 @@ mod tests {
         Option<u32>,
     );
     type MLocation = (Option<MPhysical>, Vec<u32>);
-    type MStep = (Vec<u32>, Option<MLocation>);
+    type MStep = (Vec<u32>, Option<MLocation>, Option<u32>, Option<u32>);
 
     #[derive(PartialEq, Eq, PartialOrd, Ord)]
     enum MThreadFlow {
@@ -1411,7 +1429,12 @@ mod tests {
     }
 
     fn m_step(s: &CanonStep<u32>) -> MStep {
-        (s.kinds.clone(), s.location.as_ref().map(m_location))
+        (
+            s.kinds.clone(),
+            s.location.as_ref().map(m_location),
+            s.vertex,
+            s.callee,
+        )
     }
 
     fn m_result(r: &CanonResult<u32>) -> MResult {
@@ -1521,6 +1544,8 @@ mod tests {
             CanonStep {
                 kinds: self.atoms(),
                 location: self.opt(Self::location),
+                vertex: self.opt(Self::atom),
+                callee: self.opt(Self::atom),
             }
         }
 
@@ -1563,6 +1588,14 @@ mod tests {
         }
     }
 
+    /// The last step of the first thread flow of the first code flow, if there is one.
+    fn last_step(r: &mut CanonResult<u32>) -> Option<&mut CanonStep<u32>> {
+        match r.code_flows.first_mut()?.thread_flows.first_mut()? {
+            CanonThreadFlow::Steps(s) => s.last_mut(),
+            CanonThreadFlow::Endpoints(_, b) => Some(b),
+        }
+    }
+
     fn cmp(x: &CanonResult<u32>, y: &CanonResult<u32>) -> Ordering {
         cmp_result(x, y, &|a: &u32, b: &u32| a.cmp(b), ghost())
     }
@@ -1580,15 +1613,25 @@ mod tests {
                 0 => g.result(),
                 1 => x.clone(),
                 _ => {
-                    // Change one top-level field of a copy.
+                    // Change one top-level field, or a step's property, of a copy.
                     let mut y = x.clone();
-                    match g.next(6) {
+                    match g.next(8) {
                         0 => y.rule = g.opt(Gen::atom),
                         1 => y.kind = g.atom(),
                         2 => y.level = g.atom(),
                         3 => y.locations = g.vec(2, Gen::location),
                         4 => y.props.vertices = g.keyeds(),
-                        _ => y.props.labels = g.opt(Gen::atoms),
+                        5 => y.props.labels = g.opt(Gen::atoms),
+                        6 => {
+                            if let Some(s) = last_step(&mut y) {
+                                s.vertex = g.opt(Gen::atom);
+                            }
+                        }
+                        _ => {
+                            if let Some(s) = last_step(&mut y) {
+                                s.callee = g.opt(Gen::atom);
+                            }
+                        }
                     }
                     y
                 }

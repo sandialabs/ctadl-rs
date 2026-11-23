@@ -1,11 +1,16 @@
-//! `diff-query` on SARIF from real `ctadl query` runs. An edit that changes nothing a result
-//! means (order where SARIF gives it none, the numbering of `run.logicalLocations`, instruction
-//! and function ids, message text) reports nothing, and an edit that does is reported as
-//! exactly what it changed.
+//! `diff-query` on SARIF from real `ctadl query` runs. An edit that changes nothing compared
+//! (order where SARIF gives it none, including the order of execution notifications; the
+//! numbering of `run.logicalLocations`; instruction and function ids, also inside a step's
+//! `taintVertex`; message text, and a notification's message arguments) reports nothing. An
+//! edit that changes something compared (a result, a step's `taintVertex` or `callee`, a
+//! notification's level or property, an invocation's `executionSuccessful` or `exitCode`) is
+//! reported as exactly what it changed, and nothing else.
 //!
-//! The fixture is `ties.c` indexed with `ties.json` and queried in every profile. Each test
-//! edits that SARIF as JSON, or queries `ties.c` indexed with other ids, and first checks that
-//! the edit changed something, so an edit that is a no-op cannot pass.
+//! The fixture is `ties.c` indexed with `ties.json` and queried in every profile. `ctadl query`
+//! writes no step properties yet, so the tests of step-level edits also run on that SARIF with
+//! step properties added. Each test edits that SARIF as JSON, or queries `ties.c` indexed with
+//! other ids, and first checks that the edit changed something, so an edit that is a no-op
+//! cannot pass.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -131,6 +136,19 @@ fn results_mut(doc: &mut Value) -> &mut Vec<Value> {
     doc["runs"][0]["results"].as_array_mut().unwrap()
 }
 
+/// The execution notifications of `doc`'s only invocation.
+fn notifications(doc: &Value) -> &Vec<Value> {
+    doc["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+        .as_array()
+        .unwrap()
+}
+
+fn notifications_mut(doc: &mut Value) -> &mut Vec<Value> {
+    doc["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+        .as_array_mut()
+        .unwrap()
+}
+
 fn rule(result: &Value) -> &str {
     result["ruleId"].as_str().unwrap()
 }
@@ -158,6 +176,104 @@ fn step_key(step: &Value) -> String {
         loc.remove("message");
     }
     s.to_string()
+}
+
+/// Every step of every thread flow of every result of `doc`, in file order.
+fn for_each_step(doc: &mut Value, f: &mut dyn FnMut(&mut Value)) {
+    for result in results_mut(doc) {
+        let Some(flows) = result.get_mut("codeFlows").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for flow in flows {
+            for thread in flow["threadFlows"].as_array_mut().unwrap() {
+                for step in thread["locations"].as_array_mut().unwrap() {
+                    f(step);
+                }
+            }
+        }
+    }
+}
+
+/// `doc` with a `taintVertex` and a `callee` on every step, each different from every other
+/// step's: `ctadl query` writes neither yet.
+fn with_step_props(doc: &Value) -> Value {
+    let mut doc = doc.clone();
+    let mut k = 0;
+    for_each_step(&mut doc, &mut |step| {
+        step["properties"] = json!({
+            "taintVertex": format!("call-arg({}, {}).f{k}", 1000 + k, k % 3),
+            "callee": format!("callee_{k}"),
+        });
+        k += 1;
+    });
+    doc
+}
+
+/// A SARIF file a test edits, and its contents.
+struct Base {
+    /// The profile, and whether step properties were added.
+    name: String,
+    path: PathBuf,
+    doc: Value,
+    step_props: bool,
+    _tmp: Option<TempDir>,
+}
+
+/// The files the tests of step-level edits run on in `profile`: the real SARIF, and the same
+/// [`with_step_props`].
+fn bases(profile: &str) -> [Base; 2] {
+    let path = sarif(profile);
+    let doc = read(&path);
+    let props = with_step_props(&doc);
+    let (tmp, props_path) = write(&props);
+    [
+        Base {
+            name: profile.to_string(),
+            path,
+            doc,
+            step_props: false,
+            _tmp: None,
+        },
+        Base {
+            name: format!("{profile} with step properties"),
+            path: props_path,
+            doc: props,
+            step_props: true,
+            _tmp: Some(tmp),
+        },
+    ]
+}
+
+/// The step property `key` of `step`.
+fn step_prop<'a>(step: &'a mut Value, key: &str) -> &'a mut Value {
+    step.pointer_mut(&format!("/properties/{key}"))
+        .unwrap_or_else(|| panic!("a step has no property {key}"))
+}
+
+/// `vertex`, a `call-arg(<id>, <formal>)...` vertex, with the next formal.
+fn next_formal(vertex: &str) -> String {
+    let (head, tail) = vertex.split_once(", ").unwrap();
+    let (formal, rest) = tail.split_once(')').unwrap();
+    let formal: u64 = formal.parse().unwrap();
+    format!("{head}, {}){rest}", (formal + 1) % 3)
+}
+
+/// `s` with the instruction id of each `call-arg(<id>,` in it increased by `by`.
+fn shift_call_args(s: &str, by: u64) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(at) = rest.find("call-arg(") {
+        let after = at + "call-arg(".len();
+        out.push_str(&rest[..after]);
+        let digits: String = rest[after..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        out.push_str(&(digits.parse::<u64>().unwrap() + by).to_string());
+        rest = &rest[after + digits.len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Numbers `steps` 1, 2, ... in array order.
@@ -190,17 +306,28 @@ fn assert_identical(a: &Path, b: &Path, what: &str) {
 /// The `(count in A, count in B)` of each result one side of a report shows.
 type Counts = Vec<(usize, usize)>;
 
+/// How many differing rows `report` has, more in A then more in B, for results, then
+/// notifications, then invocation statuses.
+fn totals(report: &Report) -> [usize; 6] {
+    [
+        report.more_in_a.total(),
+        report.more_in_b.total(),
+        report.notifications_more_in_a.total(),
+        report.notifications_more_in_b.total(),
+        report.invocations_more_in_a.total(),
+        report.invocations_more_in_b.total(),
+    ]
+}
+
+fn counts(s: &ctadl_query_diff::Samples) -> Counts {
+    s.rows.iter().map(|r| (r.count_a, r.count_b)).collect()
+}
+
 /// Asserts that `report` has `in_a` results more often in A and `in_b` more often in B, and
-/// returns each side's counts.
+/// no differing notification or invocation status, and returns each side's counts.
 fn assert_reported(report: &Report, in_a: usize, in_b: usize, what: &str) -> (Counts, Counts) {
     let text = report.to_text();
-    assert_eq!(
-        (report.more_in_a.total(), report.more_in_b.total()),
-        (in_a, in_b),
-        "{what}:\n{text}"
-    );
-    let counts =
-        |s: &ctadl_query_diff::Samples| s.rows.iter().map(|r| (r.count_a, r.count_b)).collect();
+    assert_eq!(totals(report), [in_a, in_b, 0, 0, 0, 0], "{what}:\n{text}");
     (counts(&report.more_in_a), counts(&report.more_in_b))
 }
 
@@ -292,7 +419,8 @@ fn shuffle_location(loc: &mut Value, rng: &mut Rng, out: &mut Reordered) {
 
 /// Shuffles every collection of `doc` whose order SARIF gives no meaning: results, a result's
 /// locations and code flows, a code flow's thread flows, a location's logical locations, a
-/// step's kinds, and the set- and map-valued properties. Steps keep their order.
+/// step's kinds, the set- and map-valued properties, and the execution notifications. Steps
+/// keep their order.
 fn shuffle(doc: &mut Value, rng: &mut Rng) -> Reordered {
     let mut out = Reordered::new();
     for result in results_mut(doc) {
@@ -346,6 +474,12 @@ fn shuffle(doc: &mut Value, rng: &mut Rng) -> Reordered {
     shuffle_array(
         Some(&mut doc["runs"][0]["results"]),
         "results",
+        rng,
+        &mut out,
+    );
+    shuffle_array(
+        doc.pointer_mut("/runs/0/invocations/0/toolExecutionNotifications"),
+        "notifications",
         rng,
         &mut out,
     );
@@ -504,42 +638,58 @@ fn self_identical() {
 fn shuffled_arrays() {
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     for (_, profile) in PROFILES {
-        let what = format!("{profile}: shuffled");
-        let a = sarif(profile);
-        let base = read(&a);
-        let mut doc = base.clone();
-        let reordered = shuffle(&mut doc, &mut rng);
-        assert_changed(&base, &doc, &what);
-        assert!(reordered.contains_key("results"), "{what}: {reordered:?}");
-        assert!(
-            ["taintLabels", "taintVertices keys", "taintVertices values"]
-                .iter()
-                .any(|k| reordered.contains_key(k)),
-            "{what}: no property was reordered: {reordered:?}"
-        );
-        let (_tmp, b) = write(&doc);
-        assert_identical(&a, &b, &what);
-
-        // The real SARIF has one location per result, one flow and so on, so the same with
-        // a second element everywhere.
-        let what = format!("{profile}: widened, shuffled");
-        let wide = widened(&base);
-        let mut doc = wide.clone();
-        let reordered = shuffle(&mut doc, &mut rng);
-        assert_changed(&wide, &doc, &what);
-        let mut expected = vec!["results", "result.locations", "location.logicalLocations"];
-        if has_flows(profile) {
-            expected.extend(["codeFlows", "threadFlows", "step.kinds"]);
-        }
-        for k in expected {
+        for Base {
+            name,
+            path: a,
+            doc: base,
+            ..
+        } in &bases(profile)
+        {
+            let what = format!("{name}: shuffled");
+            let mut doc = base.clone();
+            let reordered = shuffle(&mut doc, &mut rng);
+            assert_changed(base, &doc, &what);
+            for k in ["results", "notifications"] {
+                assert!(
+                    reordered.contains_key(k),
+                    "{what}: no {k} reordered: {reordered:?}"
+                );
+            }
             assert!(
-                reordered.contains_key(k),
-                "{what}: no {k} reordered: {reordered:?}"
+                ["taintLabels", "taintVertices keys", "taintVertices values"]
+                    .iter()
+                    .any(|k| reordered.contains_key(k)),
+                "{what}: no property was reordered: {reordered:?}"
             );
+            let (_tmp, b) = write(&doc);
+            assert_identical(a, &b, &what);
+
+            // The real SARIF has one location per result, one flow and so on, so the same
+            // with a second element everywhere.
+            let what = format!("{name}: widened, shuffled");
+            let wide = widened(base);
+            let mut doc = wide.clone();
+            let reordered = shuffle(&mut doc, &mut rng);
+            assert_changed(&wide, &doc, &what);
+            let mut expected = vec![
+                "results",
+                "result.locations",
+                "location.logicalLocations",
+                "notifications",
+            ];
+            if has_flows(profile) {
+                expected.extend(["codeFlows", "threadFlows", "step.kinds"]);
+            }
+            for k in expected {
+                assert!(
+                    reordered.contains_key(k),
+                    "{what}: no {k} reordered: {reordered:?}"
+                );
+            }
+            let (_tmp_a, a) = write(&wide);
+            let (_tmp_b, b) = write(&doc);
+            assert_identical(&a, &b, &what);
         }
-        let (_tmp_a, a) = write(&wide);
-        let (_tmp_b, b) = write(&doc);
-        assert_identical(&a, &b, &what);
     }
 }
 
@@ -547,24 +697,30 @@ fn shuffled_arrays() {
 fn renumbered_logical_locations() {
     let mut rng = Rng(0x2545_f491_4f6c_dd1d);
     for (_, profile) in PROFILES {
-        let what = format!("{profile}: logicalLocations renumbered");
-        let a = sarif(profile);
-        let base = read(&a);
-        let mut doc = base.clone();
-        let table = doc["runs"][0]["logicalLocations"].as_array_mut().unwrap();
-        assert!(table.len() >= 2, "{what}: {} entries", table.len());
-        let p = rng.permutation(table.len());
-        let old = std::mem::take(table);
-        *table = p.iter().map(|&i| old[i].clone()).collect();
-        let mut new_of = vec![0; p.len()];
-        for (j, &i) in p.iter().enumerate() {
-            new_of[i] = j as u64;
+        for Base {
+            name,
+            path: a,
+            doc: base,
+            ..
+        } in &bases(profile)
+        {
+            let what = format!("{name}: logicalLocations renumbered");
+            let mut doc = base.clone();
+            let table = doc["runs"][0]["logicalLocations"].as_array_mut().unwrap();
+            assert!(table.len() >= 2, "{what}: {} entries", table.len());
+            let p = rng.permutation(table.len());
+            let old = std::mem::take(table);
+            *table = p.iter().map(|&i| old[i].clone()).collect();
+            let mut new_of = vec![0; p.len()];
+            for (j, &i) in p.iter().enumerate() {
+                new_of[i] = j as u64;
+            }
+            let changed = map_logical_refs(&mut doc["runs"][0]["results"], &|i| new_of[i as usize]);
+            assert!(changed > 0, "{what}: no reference changed");
+            assert_changed(base, &doc, &what);
+            let (_tmp, b) = write(&doc);
+            assert_identical(a, &b, &what);
         }
-        let changed = map_logical_refs(&mut doc["runs"][0]["results"], &|i| new_of[i as usize]);
-        assert!(changed > 0, "{what}: no reference changed");
-        assert_changed(&base, &doc, &what);
-        let (_tmp, b) = write(&doc);
-        assert_identical(&a, &b, &what);
     }
 }
 
@@ -624,17 +780,23 @@ fn renumbered_ids() {
     }
 }
 
-/// Replaces the text of every message in `doc`, and returns how many it replaced.
+/// Replaces the text and the arguments of every message in `doc`, and returns how many
+/// messages it changed.
 fn change_messages(v: &mut Value) -> usize {
     let mut changed = 0;
     match v {
         Value::Object(obj) => {
             for (key, value) in obj.iter_mut() {
                 if key == "message"
-                    && let Some(text) = value.get_mut("text")
+                    && (value.get("text").is_some() || value.get("arguments").is_some())
                 {
                     changed += 1;
-                    *text = json!(format!("edited message {changed}"));
+                    if let Some(text) = value.get_mut("text") {
+                        *text = json!(format!("edited message {changed}"));
+                    }
+                    if let Some(args) = value.get_mut("arguments") {
+                        *args = json!([format!("edited argument {changed}")]);
+                    }
                 } else {
                     changed += change_messages(value);
                 }
@@ -653,18 +815,40 @@ fn change_messages(v: &mut Value) -> usize {
 #[test]
 fn changed_messages() {
     for (_, profile) in PROFILES {
-        let what = format!("{profile}: messages changed");
-        let a = sarif(profile);
-        let base = read(&a);
-        let mut doc = base.clone();
-        let changed = change_messages(&mut doc["runs"][0]["results"]);
-        assert!(
-            changed >= results(&base).len(),
-            "{what}: {changed} messages"
-        );
-        assert_changed(&base, &doc, &what);
-        let (_tmp, b) = write(&doc);
-        assert_identical(&a, &b, &what);
+        for Base {
+            name,
+            path: a,
+            doc: base,
+            ..
+        } in &bases(profile)
+        {
+            let what = format!("{name}: messages changed");
+            let mut doc = base.clone();
+            let changed = change_messages(&mut doc["runs"][0]);
+            assert!(
+                changed >= results(base).len() + notifications(base).len(),
+                "{what}: {changed} messages"
+            );
+            assert_changed(base, &doc, &what);
+            assert_changed(
+                &base["runs"][0]["invocations"],
+                &doc["runs"][0]["invocations"],
+                &format!("{what}, under invocations"),
+            );
+            let arguments = |d: &Value| -> Vec<Value> {
+                notifications(d)
+                    .iter()
+                    .map(|n| n["message"]["arguments"].clone())
+                    .collect()
+            };
+            assert_ne!(
+                arguments(base),
+                arguments(&doc),
+                "{what}: no notification's arguments changed"
+            );
+            let (_tmp, b) = write(&doc);
+            assert_identical(a, &b, &what);
+        }
     }
 }
 
@@ -711,29 +895,31 @@ fn duplicated_result() {
 #[test]
 fn swapped_steps() {
     for (_, profile) in PROFILES {
-        let a = sarif(profile);
-        let base = read(&a);
-        let mut swapped = 0;
-        for i in 0..results(&base).len() {
-            let what = format!("{profile}: steps of result {i} swapped");
-            let mut doc = base.clone();
-            let Some(steps) = steps_mut(&mut results_mut(&mut doc)[i]) else {
-                continue;
-            };
-            let last = steps.len() - 1;
-            assert_ne!(step_key(&steps[0]), step_key(&steps[last]), "{what}");
-            steps.swap(0, last);
-            renumber_steps(steps);
-            assert_changed(&base, &doc, &what);
-            let (_tmp, b) = write(&doc);
-            assert_reported(&diff(&a, &b, false), 1, 1, &what);
-            swapped += 1;
+        for Base {
+            name,
+            path: a,
+            doc: base,
+            ..
+        } in &bases(profile)
+        {
+            let mut swapped = 0;
+            for i in 0..results(base).len() {
+                let what = format!("{name}: steps of result {i} swapped");
+                let mut doc = base.clone();
+                let Some(steps) = steps_mut(&mut results_mut(&mut doc)[i]) else {
+                    continue;
+                };
+                let last = steps.len() - 1;
+                assert_ne!(step_key(&steps[0]), step_key(&steps[last]), "{what}");
+                steps.swap(0, last);
+                renumber_steps(steps);
+                assert_changed(base, &doc, &what);
+                let (_tmp, b) = write(&doc);
+                assert_reported(&diff(a, &b, false), 1, 1, &what);
+                swapped += 1;
+            }
+            assert_eq!(swapped > 0, has_flows(profile), "{name}: {swapped} flows");
         }
-        assert_eq!(
-            swapped > 0,
-            has_flows(profile),
-            "{profile}: {swapped} flows"
-        );
     }
 }
 
@@ -762,7 +948,8 @@ fn changed_line() {
 }
 
 /// With the endpoints rule, a change to a thread flow's interior steps reports nothing, and a
-/// deleted result still does.
+/// deleted result still does. With step properties, a changed interior `taintVertex` reports
+/// nothing, and a changed last-step `taintVertex` is reported.
 ///
 /// `ties.c`'s flows have at most three steps, so one interior step. Each is checked two
 /// ways: replaced by another flow's differing interior step, and, in a flow lengthened to
@@ -770,65 +957,89 @@ fn changed_line() {
 #[test]
 fn endpoints_only() {
     for (_, profile) in PROFILES {
-        let a = sarif(profile);
-        let base = read(&a);
-        let interiors: Vec<Value> = results(&base)
-            .iter()
-            .filter_map(steps)
-            .filter(|s| s.len() >= 3)
-            .flat_map(|s| s[1..s.len() - 1].iter().cloned())
-            .collect();
-        let mut checked = 0;
-        for i in 0..results(&base).len() {
-            if rule(&results(&base)[i]) != ENDPOINTS_RULE {
-                continue;
-            }
-            let what = format!("{profile}: result {i} deleted");
-            let mut doc = base.clone();
-            results_mut(&mut doc).remove(i);
-            let (_tmp, b) = write(&doc);
-            assert_reported(&diff(&a, &b, true), 1, 0, &what);
-
-            let flow = steps(&results(&base)[i]).unwrap();
-            if flow.len() < 3 {
-                continue;
-            }
-            let interior = &flow[1];
-            let other = interiors
+        for Base {
+            name,
+            path: a,
+            doc: base,
+            step_props,
+            ..
+        } in &bases(profile)
+        {
+            let interiors: Vec<Value> = results(base)
                 .iter()
-                .find(|s| step_key(s) != step_key(interior))
-                .unwrap_or_else(|| panic!("{profile}: every interior step is the same"));
+                .filter_map(steps)
+                .filter(|s| s.len() >= 3)
+                .flat_map(|s| s[1..s.len() - 1].iter().cloned())
+                .collect();
+            let mut checked = 0;
+            for i in 0..results(base).len() {
+                if rule(&results(base)[i]) != ENDPOINTS_RULE {
+                    continue;
+                }
+                let what = format!("{name}: result {i} deleted");
+                let mut doc = base.clone();
+                results_mut(&mut doc).remove(i);
+                let (_tmp, b) = write(&doc);
+                assert_reported(&diff(a, &b, true), 1, 0, &what);
 
-            let what = format!("{profile}: interior step of result {i} replaced");
-            let mut doc = base.clone();
-            let steps = steps_mut(&mut results_mut(&mut doc)[i]).unwrap();
-            steps[1] = other.clone();
-            renumber_steps(steps);
-            let (_tmp, b) = write(&doc);
-            assert_reported(&diff(&a, &b, false), 1, 1, &what);
-            assert_identical_endpoints(&a, &b, &what);
+                let flow = steps(&results(base)[i]).unwrap();
+                if flow.len() < 3 {
+                    continue;
+                }
+                let interior = &flow[1];
+                let other = interiors
+                    .iter()
+                    .find(|s| step_key(s) != step_key(interior))
+                    .unwrap_or_else(|| panic!("{name}: every interior step is the same"));
 
-            let what = format!("{profile}: interior steps of result {i} swapped");
-            let mut longer = base.clone();
-            let steps = steps_mut(&mut results_mut(&mut longer)[i]).unwrap();
-            steps.insert(2, other.clone());
-            renumber_steps(steps);
-            let mut doc = longer.clone();
-            let steps = steps_mut(&mut results_mut(&mut doc)[i]).unwrap();
-            steps.swap(1, 2);
-            renumber_steps(steps);
-            assert_changed(&longer, &doc, &what);
-            let (_tmp_a, la) = write(&longer);
-            let (_tmp_b, lb) = write(&doc);
-            assert_reported(&diff(&la, &lb, false), 1, 1, &what);
-            assert_identical_endpoints(&la, &lb, &what);
-            checked += 1;
+                let what = format!("{name}: interior step of result {i} replaced");
+                let mut doc = base.clone();
+                let steps = steps_mut(&mut results_mut(&mut doc)[i]).unwrap();
+                steps[1] = other.clone();
+                renumber_steps(steps);
+                let (_tmp, b) = write(&doc);
+                assert_reported(&diff(a, &b, false), 1, 1, &what);
+                assert_identical_endpoints(a, &b, &what);
+
+                let what = format!("{name}: interior steps of result {i} swapped");
+                let mut longer = base.clone();
+                let steps = steps_mut(&mut results_mut(&mut longer)[i]).unwrap();
+                steps.insert(2, other.clone());
+                renumber_steps(steps);
+                let mut doc = longer.clone();
+                let steps = steps_mut(&mut results_mut(&mut doc)[i]).unwrap();
+                steps.swap(1, 2);
+                renumber_steps(steps);
+                assert_changed(&longer, &doc, &what);
+                let (_tmp_a, la) = write(&longer);
+                let (_tmp_b, lb) = write(&doc);
+                assert_reported(&diff(&la, &lb, false), 1, 1, &what);
+                assert_identical_endpoints(&la, &lb, &what);
+
+                if *step_props {
+                    let what = format!("{name}: interior taintVertex of result {i} changed");
+                    let mut doc = base.clone();
+                    let steps = steps_mut(&mut results_mut(&mut doc)[i]).unwrap();
+                    let vertex = step_prop(&mut steps[1], "taintVertex");
+                    *vertex = json!(next_formal(vertex.as_str().unwrap()));
+                    assert_changed(base, &doc, &what);
+                    let (_tmp, b) = write(&doc);
+                    assert_reported(&diff(a, &b, false), 1, 1, &what);
+                    assert_identical_endpoints(a, &b, &what);
+
+                    let what = format!("{name}: last taintVertex of result {i} changed");
+                    let mut doc = base.clone();
+                    let steps = steps_mut(&mut results_mut(&mut doc)[i]).unwrap();
+                    let vertex = step_prop(steps.last_mut().unwrap(), "taintVertex");
+                    *vertex = json!(next_formal(vertex.as_str().unwrap()));
+                    assert_changed(base, &doc, &what);
+                    let (_tmp, b) = write(&doc);
+                    assert_reported(&diff(a, &b, true), 1, 1, &what);
+                }
+                checked += 1;
+            }
+            assert_eq!(checked > 0, has_flows(profile), "{name}: {checked} flows");
         }
-        assert_eq!(
-            checked > 0,
-            has_flows(profile),
-            "{profile}: {checked} flows"
-        );
     }
 }
 
@@ -839,4 +1050,162 @@ fn assert_identical_endpoints(a: &Path, b: &Path, what: &str) {
         "{what} (endpoints only):\n{}",
         report.to_text()
     );
+}
+
+/// Asserts that `report` differs in one row more in A and one more in B of the section whose
+/// totals start at `at` in [`totals`], and in nothing else, and returns the two rows' counts.
+fn assert_one_row_each_side(report: &Report, at: usize, what: &str) -> [(usize, usize); 2] {
+    let mut expected = [0; 6];
+    expected[at] = 1;
+    expected[at + 1] = 1;
+    assert_eq!(totals(report), expected, "{what}:\n{}", report.to_text());
+    let (in_a, in_b) = match at {
+        2 => (
+            &report.notifications_more_in_a,
+            &report.notifications_more_in_b,
+        ),
+        4 => (&report.invocations_more_in_a, &report.invocations_more_in_b),
+        _ => (&report.more_in_a, &report.more_in_b),
+    };
+    [counts(in_a)[0], counts(in_b)[0]]
+}
+
+/// Changing any execution notification's level, or a number in its properties, is reported as
+/// that notification changed. Some notifications are equal once their message is dropped, so
+/// the changed one may be held more than once by A.
+#[test]
+fn changed_notification() {
+    for (_, profile) in PROFILES {
+        let a = sarif(profile);
+        let base = read(&a);
+        let mut with_number = 0;
+        for j in 0..notifications(&base).len() {
+            let mut edits: Vec<(String, Value)> = Vec::new();
+
+            let mut doc = base.clone();
+            let n = &mut notifications_mut(&mut doc)[j];
+            let level = if n["level"] == "warning" {
+                "note"
+            } else {
+                "warning"
+            };
+            n["level"] = json!(level);
+            edits.push((format!("{profile}: notification {j} level {level}"), doc));
+
+            let mut doc = base.clone();
+            let props = notifications_mut(&mut doc)[j]
+                .get_mut("properties")
+                .and_then(Value::as_object_mut);
+            if let Some((key, value)) = props.and_then(|p| p.iter_mut().find(|(_, v)| v.is_u64())) {
+                let what = format!("{profile}: notification {j} property {key} increased");
+                *value = json!(value.as_u64().unwrap() + 1);
+                edits.push((what, doc));
+                with_number += 1;
+            }
+
+            for (what, doc) in edits {
+                assert_changed(&base, &doc, &what);
+                let (_tmp, b) = write(&doc);
+                for endpoints_only in [false, true] {
+                    let [in_a, in_b] =
+                        assert_one_row_each_side(&diff(&a, &b, endpoints_only), 2, &what);
+                    assert_eq!(in_a.0, in_a.1 + 1, "{what}");
+                    assert_eq!(in_b.1, in_b.0 + 1, "{what}");
+                }
+            }
+        }
+        assert!(
+            with_number > 0,
+            "{profile}: no notification has a number property"
+        );
+    }
+}
+
+/// Changing the invocation's `executionSuccessful` or `exitCode`, or removing `exitCode`, is
+/// reported as that status changed.
+#[test]
+fn changed_status() {
+    for (_, profile) in PROFILES {
+        let a = sarif(profile);
+        let base = read(&a);
+        let edits: [(&str, fn(&mut Map<String, Value>)); 3] = [
+            ("executionSuccessful false", |inv| {
+                inv.insert("executionSuccessful".into(), json!(false));
+            }),
+            ("exitCode 1", |inv| {
+                inv.insert("exitCode".into(), json!(1));
+            }),
+            ("exitCode removed", |inv| {
+                inv.remove("exitCode");
+            }),
+        ];
+        for (edit, f) in edits {
+            let what = format!("{profile}: {edit}");
+            let mut doc = base.clone();
+            f(doc["runs"][0]["invocations"][0].as_object_mut().unwrap());
+            assert_changed(&base, &doc, &what);
+            let (_tmp, b) = write(&doc);
+            for endpoints_only in [false, true] {
+                let rows = assert_one_row_each_side(&diff(&a, &b, endpoints_only), 4, &what);
+                assert_eq!(rows, [(1, 0), (0, 1)], "{what}");
+            }
+        }
+    }
+}
+
+/// With step properties, changing the formal of a flow's first `taintVertex`, or its first
+/// `callee`, is reported as that result changed; renumbering the instruction ids in the step
+/// properties reports nothing.
+#[test]
+fn changed_step_property() {
+    for (_, profile) in PROFILES {
+        let [
+            _,
+            Base {
+                name,
+                path: a,
+                doc: base,
+                ..
+            },
+        ] = &bases(profile);
+        let mut checked = 0;
+        for i in 0..results(base).len() {
+            if steps(&results(base)[i]).is_none() {
+                continue;
+            }
+            let edits: [(&str, &str, fn(&str) -> String); 2] = [
+                ("taintVertex", "formal", next_formal),
+                ("callee", "name", |c| format!("{c}_changed")),
+            ];
+            for (key, part, f) in edits {
+                let what = format!("{name}: {part} of first {key} of result {i} changed");
+                let mut doc = base.clone();
+                let steps = steps_mut(&mut results_mut(&mut doc)[i]).unwrap();
+                let value = step_prop(&mut steps[0], key);
+                *value = json!(f(value.as_str().unwrap()));
+                assert_changed(base, &doc, &what);
+                let (_tmp, b) = write(&doc);
+                for endpoints_only in [false, true] {
+                    assert_reported(&diff(a, &b, endpoints_only), 1, 1, &what);
+                }
+            }
+            checked += 1;
+        }
+        assert_eq!(checked > 0, has_flows(profile), "{name}: {checked} flows");
+
+        let what = format!("{name}: instruction ids in step properties renumbered");
+        let mut doc = base.clone();
+        for_each_step(&mut doc, &mut |step| {
+            if let Some(props) = step.get_mut("properties").and_then(Value::as_object_mut) {
+                for value in props.values_mut() {
+                    *value = json!(shift_call_args(value.as_str().unwrap(), 7));
+                }
+            }
+        });
+        if has_flows(profile) {
+            assert_changed(base, &doc, &what);
+            let (_tmp, b) = write(&doc);
+            assert_identical(a, &b, &what);
+        }
+    }
 }

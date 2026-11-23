@@ -254,31 +254,50 @@ the properties ctadl writes (`taintLabels`, `taintVertex`, `taintVertices`, `sou
 resolves to, not by its index; a physical location by its `uriBaseId` name, `uri`, region and
 address. The order of results, of a result's locations and code flows, of a code flow's thread
 flows, of a location's logical locations and of the set- and map-valued properties does not
-matter. The steps of a thread flow are compared in order. Not compared: run metadata, the tool
-and its rules, invocations, message text, `executionOrder` (checked to increase, then
-dropped), `sourceCallee` and `sinkCallee`, the debug profile's `fileSpanId`, `funcId` and
-`insnId`, the value a `uriBaseId` stands for, and the instruction id in a
-`call-arg(<id>, <formal>)` vertex. Equal results count separately: a result written twice in A
-and once in B is a difference. The canonical form and the merge that compares the two
-multisets are proved with Verus (`sarif-canon`, `multiset-diff`); the parser that picks the
-fields out of a file is tested on real `ctadl query` output in every profile.
+matter. The steps of a thread flow are compared in order, each by its `kinds`, its location,
+and the `taintVertex` and `callee` in its `properties` when present (absent compares equal
+only to absent). `ctadl query` does not write these two step properties yet, so today its steps
+are compared by `kinds` and location.
+
+The execution notifications (`toolExecutionNotifications`) of every invocation of every run in
+a file are compared as one multiset, each by everything it holds but `message.text` and
+`message.arguments`: its `descriptor`, `level`, `message.id` and `properties`. The invocations
+of every run are compared as one multiset too, each by its `executionSuccessful` and `exitCode`
+(absent compares equal only to absent).
+
+Not compared: run metadata, the tool and its rules, message text anywhere, a notification's
+`message.arguments`, `toolConfigurationNotifications`, the rest of an invocation
+(`commandLine`, `arguments`, times, `exitCodeDescription`, `ruleConfigurationOverrides`),
+`executionOrder` (checked to increase, then dropped), `sourceCallee` and `sinkCallee`, the
+debug profile's `fileSpanId`, `funcId` and `insnId`, the value a `uriBaseId` stands for, and
+the instruction id in a `call-arg(<id>, <formal>)` vertex, in a result or a step. Equal
+results, notifications or invocations count separately: a result written twice in A and once in
+B is a difference. The canonical form of a result and the merge that compares two multisets are
+proved with Verus (`sarif-canon`, `multiset-diff`); the parser that picks the fields out of a
+file is tested on real `ctadl query` output in every profile.
 
 `--endpoints-only` compares a `C0001.tainted-path` result by its rule, kind, level,
 `taintLabels`, `sourceFunctions`, `sinkFunctions`, and the first and last step of each thread
-flow. Its primary location, its interior steps, `taintVertex`, `taintVertices`,
-`taintedFormals` and `import` are left out, so two runs that pick different witness paths for
-one source/sink pair (see above) compare equal. Results with equal endpoints still count
-separately: two such flows in A and one in B is a difference. Other rules are compared in full.
-The flag changes what is compared, never whether a file is accepted.
+flow, with their `taintVertex` and `callee`. Its primary location, its interior steps, and its
+own `taintVertex`, `taintVertices`, `taintedFormals` and `import` are left out, so two runs
+that pick different witness paths for one source/sink pair (see above) compare equal. Results with equal endpoints still count
+separately: two such flows in A and one in B is a difference. Other rules are compared in full,
+and notifications and invocations as without the flag. The flag changes what is compared, never
+whether a file is accepted.
 
 The first line is `IDENTICAL` or `DIFFERENT`. Then the two files, `flag: --endpoints-only` when
 it is given, and how many results each file holds. Then, for each side that holds some results
 more often than the other, `more in A: N results, K not shown` (N distinct results) and at most
 `--limit` of them (20 by default), first by their printed form, each as `[A n, B m]` followed by
 the result as one line of JSON: SARIF's key names, logical locations as their names, absent
-fields and empty collections left out, and a flow cut to its endpoints as
-`{"endpoints":[first,last]}`. For example, with `xfer.c` from `ctadl-ascent/tests/c` as A, and
-as B the same file with a second sink call, `sink(s);`, added at line 14:
+fields and empty collections left out, a step's `taintVertex` and `callee` under `properties`
+with the instruction id of a `call-arg` vertex printed as `_`, and a flow cut to its endpoints
+as `{"endpoints":[first,last]}`. Then `notifications: A n, B m` and `invocations: A n, B m`,
+each with its own `more in A` and `more in B` rows in the same form and the same `--limit`: a
+notification as its JSON without `message.text` and `message.arguments`, keys sorted, and an
+invocation as `{"executionSuccessful":…,"exitCode":…}`. For example, with `xfer.c` from
+`ctadl-ascent/tests/c` as A, and as B the same file with a second sink call, `sink(s);`, added
+at line 14:
 
 ```
 DIFFERENT
@@ -287,35 +306,55 @@ B: b.sarif
 results: A 3, B 5
 more in B: 2 results, 0 not shown
   [A 0, B 1] {"ruleId":"C0001.tainted-path","kind":"fail","level":"warning","locations":[{"physicalLocation":{"artifactLocation":{"uriBaseId":"IMPORT_xfer.c","uri":"xfer.c"},"region":{"startLine":14,"startColumn":3,"endLine":14,"endColumn":10}},"logicalLocations":["main"]}],"codeFlows":[{"threadFlows":[{"locations":[{"kinds":["taint"],"location":{"physicalLocation":{"artifactLocation":{"uriBaseId":"IMPORT_xfer.c","uri":"xfer.c"},"region":{"startLine":11,"startColumn":3,"endLine":11,"endColumn":15}},"logicalLocations":["main"]}},{"kinds":["taint"],"location":{"physicalLocation":{"artifactLocation":{"uriBaseId":"IMPORT_xfer.c","uri":"xfer.c"},"region":{"startLine":14,"startColumn":3,"endLine":14,"endColumn":10}},"logicalLocations":["main"]}}]}]}],"properties":{"taintLabels":["xfer"],"taintVertices":[["xfer",["call-arg(_, 0)"]]],"sourceFunctions":["source"],"sinkFunctions":["sink"]}}
-  [A 1, B 2] {"ruleId":"C0004.taint-sink","kind":"informational","level":"none","locations":[{"logicalLocations":["sink"]}],"properties":{"taintLabels":["xfer"],"taintVertex":"call-arg(_, 0)"}}
+  [A 0, B 1] {"ruleId":"C0004.taint-sink","kind":"informational","level":"none","locations":[{"physicalLocation":{"artifactLocation":{"uriBaseId":"IMPORT_xfer.c","uri":"xfer.c"},"region":{"startLine":14,"startColumn":3,"endLine":14,"endColumn":10}},"logicalLocations":["sink"]}],"properties":{"taintLabels":["xfer"],"taintVertex":"call-arg(_, 0)"}}
+notifications: A 3, B 3
+more in A: 2 notifications, 0 not shown
+  [A 1, B 0] {"descriptor":{"id":"CTADL0100.endpoint-match-summary"},"level":"note","message":{"id":"default"},"properties":{"portsDeclared":2,"portsUnmatched":0,"sinksDeclared":1,"sinksMatched":1,"sourcesDeclared":1,"sourcesMatched":1,"unmatchedDeclarations":0}}
+  [A 2, B 1] {"descriptor":{"id":"CTADL0111.call-without-body"},"level":"note","message":{"id":"default"},"properties":{"calls":1}}
+more in B: 2 notifications, 0 not shown
+  [A 0, B 1] {"descriptor":{"id":"CTADL0100.endpoint-match-summary"},"level":"note","message":{"id":"default"},"properties":{"portsDeclared":2,"portsUnmatched":0,"sinksDeclared":1,"sinksMatched":2,"sourcesDeclared":1,"sourcesMatched":1,"unmatchedDeclarations":0}}
+  [A 0, B 1] {"descriptor":{"id":"CTADL0111.call-without-body"},"level":"note","message":{"id":"default"},"properties":{"calls":2}}
+invocations: A 1, B 1
 ```
 
-B has one new flow, to line 14, and one more `C0004.taint-sink` result for `sink`.
+B has one new flow, to line 14, and one more `C0004.taint-sink` result, at line 14. Its
+notifications count the new call: the endpoint summary matches two sinks, and `sink`'s
+`CTADL0111.call-without-body` counts 2 calls. In A that notification equals `source`'s once the
+message is dropped, hence `[A 2, B 1]`.
 
-`--json` prints the same report as one JSON document, a result's printed form as a string:
+`--json` prints the same report as one JSON document, each row's printed form as a string:
 
 ```
-{"result":"DIFFERENT","results_differ":2,"a":"a.sarif","b":"b.sarif","endpoints_only":false,
- "limit":20,"results_a":3,"results_b":5,"more_in_a":{"rows":[],"not_shown":0},
+{"result":"DIFFERENT","results_differ":2,"notifications_differ":4,"invocations_differ":0,
+ "a":"a.sarif","b":"b.sarif","endpoints_only":false,"limit":20,"results_a":3,"results_b":5,
+ "more_in_a":{"rows":[],"not_shown":0},
  "more_in_b":{"rows":[{"row":"{\"ruleId\":\"C0001.tainted-path\",...}","count_a":0,"count_b":1},
- ...],"not_shown":0}}
+ ...],"not_shown":0},
+ "notifications_a":3,"notifications_b":3,
+ "notifications_more_in_a":{"rows":[{"row":"{\"descriptor\":{\"id\":\"CTADL0100.endpoint-match-summary\"},...}",
+ "count_a":1,"count_b":0},...],"not_shown":0},
+ "notifications_more_in_b":{"rows":[{"row":"{\"descriptor\":{\"id\":\"CTADL0100.endpoint-match-summary\"},...}",
+ "count_a":0,"count_b":1},...],"not_shown":0},
+ "invocations_a":1,"invocations_b":1,"invocations_more_in_a":{"rows":[],"not_shown":0},
+ "invocations_more_in_b":{"rows":[],"not_shown":0}}
 ```
 
-`results_differ` counts the distinct results that differ, shown or not. The exit code is 0 when
-the two multisets are equal, 1 when they differ, and 2 on an error, which goes to stderr with
+`results_differ`, `notifications_differ` and `invocations_differ` count the distinct rows that
+differ in each, shown or not. The exit code is 0 when results, notifications and invocations
+are all equal as multisets, 1 when any differ, and 2 on an error, which goes to stderr with
 nothing on stdout: a missing or unreadable file; a file that is not SARIF 2.1.0 (an unknown
-`kind` or `level` included); a result property of a shape ctadl does not write; a logical
-location with neither `fullyQualifiedName` nor `name`; a logical location `index` that is
-negative or past the end of the run's `logicalLocations`; a thread flow with no steps; or
-`executionOrder` values that do not increase. Neither `--limit`, even 0, nor `--json` changes the exit code.
+`kind` or `level` included); a result property of a shape ctadl does not write; a step
+`taintVertex` or `callee` that is not a string; a logical location with neither
+`fullyQualifiedName` nor `name`; a logical location `index` that is negative or past the end of
+the run's `logicalLocations`; a thread flow with no steps; or `executionOrder` values that do
+not increase. Neither `--limit`, even 0, nor `--json` changes the exit code.
 
 A result is compared by the locations ctadl writes. Where ctadl writes a source or sink result
 (`C0003.taint-source`, `C0004.taint-sink`) with only a logical location, naming the function,
 and no physical location at its call site, results at different call sites of one function
 compare equal, since the call site's instruction id is not compared either, and are counted by
-multiplicity. Adding or removing such a call is reported, as the `[A 1, B 2]` line above shows;
-moving one is not. A field ctadl starts writing later is not compared until `diff-query` reads
-it.
+multiplicity. Adding or removing such a call is reported; moving one is not. A field ctadl
+starts writing later is not compared until `diff-query` reads it.
 
 # Comparing every relation: `scripts/fact-dump-diff.sh`
 

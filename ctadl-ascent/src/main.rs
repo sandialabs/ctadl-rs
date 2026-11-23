@@ -84,25 +84,32 @@ pub enum Command {
     /// or unreadable index, or an index in a format other than the one this build reads.
     DiffIndex(DiffIndexArgs),
 
-    /// Compare the results of two SARIF files written by `ctadl query`, by content.
+    /// Compare the results, notifications and invocation status of two SARIF files written by
+    /// `ctadl query`, by content.
     ///
     /// Use this to check whether two query runs found the same things. The results of every run
-    /// in a file are compared as one multiset. Run metadata, tool, rules, invocations and message
-    /// text are not compared, nor the order of anything SARIF leaves unordered (results,
-    /// locations, code flows, thread flows, set- and map-valued properties), nor numbers that
-    /// are local to a run (logical location indexes, `executionOrder`, instruction, function and
-    /// span ids). A logical location is compared by what it names. The steps of a thread flow
-    /// are compared in order. Equal results count separately, so a duplicated or deleted one is
-    /// a difference.
+    /// in a file are compared as one multiset. The steps of a thread flow are compared in order,
+    /// each by its kinds, its location, and its `taintVertex` and `callee` properties when present
+    /// (`ctadl query` does not write these yet). The execution notifications of every invocation
+    /// are compared as one multiset, each by all it holds but its message text and arguments; so
+    /// are the invocations, each by `executionSuccessful` and `exitCode`. Run metadata, tool,
+    /// rules, configuration notifications, the rest of an invocation and message text are not
+    /// compared, nor the order of anything SARIF leaves unordered (results, notifications,
+    /// locations, code flows, thread flows, set- and map-valued properties), nor numbers that are
+    /// local to a run (logical location indexes, `executionOrder`, instruction, function and span
+    /// ids). A logical location is compared by what it names. Equal results or notifications
+    /// count separately, so a duplicated or deleted one is a difference.
     ///
     /// The first line of output is `IDENTICAL` or `DIFFERENT`. Then how many results each file
     /// holds, and at most `--limit` results per side that occur more often there, ordered by
-    /// content, each with how many times A and B hold it, and how many were not shown.
+    /// content, each with how many times A and B hold it, and how many were not shown. Then the
+    /// same for notifications, and for invocations.
     ///
-    /// Exits 0 when the results are the same, 1 when they differ, and 2 on an error: an
-    /// unreadable file, malformed SARIF, or a result with no canonical form (a logical location
-    /// index out of range, a thread flow with no steps, or `executionOrder` values that do not
-    /// increase). Neither `--limit` nor `--json` changes the exit code.
+    /// Exits 0 when results, notifications and invocations are all the same, 1 when any differ,
+    /// and 2 on an error: an unreadable file, malformed SARIF, a step `taintVertex` or `callee`
+    /// that is not a string, or a result with no canonical form (a logical location index out of
+    /// range, a thread flow with no steps, or `executionOrder` values that do not increase).
+    /// Neither `--limit` nor `--json` changes the exit code.
     DiffQuery(DiffQueryArgs),
 
     /// Generate detailed report on taint-analysis relevant program properties. (See 'import')
@@ -150,7 +157,8 @@ pub struct DiffQueryArgs {
     #[arg(value_name = "B")]
     pub b: PathBuf,
 
-    /// The most differing results printed per side.
+    /// The most differing rows printed per side, for each of results, notifications and
+    /// invocations.
     #[arg(long, value_name = "N", default_value_t = 20)]
     pub limit: usize,
 
@@ -158,9 +166,10 @@ pub struct DiffQueryArgs {
     #[arg(long)]
     pub json: bool,
 
-    /// Compare `C0001.tainted-path` results by the endpoints of their thread flows only,
-    /// ignoring interior steps, primary locations and taint vertices. Other rules are compared
-    /// in full.
+    /// Compare `C0001.tainted-path` results by the first and last step of their thread flows
+    /// only, with those steps' `taintVertex` and `callee`, ignoring interior steps, primary
+    /// locations and the result's taint vertices. Other rules are compared in full, and
+    /// notifications and invocations as without the flag.
     #[arg(long)]
     pub endpoints_only: bool,
 }

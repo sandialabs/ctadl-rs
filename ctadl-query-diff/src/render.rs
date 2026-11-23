@@ -2,7 +2,8 @@
 //!
 //! Keys follow SARIF's names. A field that is `None`, and a collection the canonical form
 //! reads as empty when absent, are left out; a property that is present but empty is kept,
-//! since the canonical form tells the two apart.
+//! since the canonical form tells the two apart. A step's `taintVertex` and `callee` go under
+//! its `properties`, which is left out when it has neither.
 
 use sarif_canon::types::{
     Address, CanonCodeFlow, CanonLocation, CanonResult, CanonStep, CanonThreadFlow, Keyed,
@@ -90,6 +91,16 @@ impl Json<'_> {
         }
         if let Some(l) = &s.location {
             m.insert("location".into(), self.location(l));
+        }
+        let mut props = Map::new();
+        if let Some(v) = s.vertex {
+            props.insert("taintVertex".into(), self.atom(v));
+        }
+        if let Some(c) = s.callee {
+            props.insert("callee".into(), self.atom(c));
+        }
+        if !props.is_empty() {
+            m.insert("properties".into(), Value::Object(props));
         }
         Value::Object(m)
     }

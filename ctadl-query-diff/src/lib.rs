@@ -1,10 +1,13 @@
-//! Compares the results of two SARIF files written by `ctadl query`, by content.
+//! Compares two SARIF files written by `ctadl query`, by content: their results, their
+//! execution notifications and their invocations' statuses.
 //!
 //! The parser reads each file into `sarif_canon`'s raw runs, over atoms that one [`Atoms`]
 //! table shares between both files, keeping only the fields the comparison uses.
 //! `sarif_canon` turns those into canonical results, sorted by its verified order, and
 //! [`multiset_diff`](multiset_diff::multiset_diff) compares the two sorted multisets under that
-//! same order. Only the sampled differences are ordered by their printed form.
+//! same order. Only the sampled differences are ordered by their printed form. The same parse
+//! gives each notification and each status as one canonical JSON string, and those are
+//! compared as sorted multisets of strings.
 
 mod atoms;
 mod driver;
@@ -20,7 +23,7 @@ use std::path::PathBuf;
 pub use atoms::Atoms;
 pub use diff_report::{Sample, Samples};
 pub use driver::{ENDPOINTS_RULE, Options, diff_query};
-pub use parse::{Error as ParseError, read_runs};
+pub use parse::{Error as ParseError, Parsed, read_runs};
 pub use report::Report;
 pub use sarif_canon::types::Error as CanonError;
 

@@ -128,6 +128,10 @@ pub struct RawStep<A> {
     /// `kinds`, in file order.
     pub kinds: Vec<A>,
     pub location: Option<RawLocation<A>>,
+    /// `properties.taintVertex`, rewritten as [`Props::vertex`] is.
+    pub vertex: Option<A>,
+    /// `properties.callee`.
+    pub callee: Option<A>,
 }
 
 /// `threadFlow`.
@@ -178,6 +182,8 @@ pub struct CanonStep<A> {
     /// A bag.
     pub kinds: Vec<A>,
     pub location: Option<CanonLocation<A>>,
+    pub vertex: Option<A>,
+    pub callee: Option<A>,
 }
 
 /// A thread flow: all its steps in order, or, when only endpoints are compared, its first and
@@ -257,6 +263,8 @@ pub struct RawStepV<A> {
     pub order: Option<i64>,
     pub kinds: Seq<A>,
     pub location: Option<RawLocationV<A>>,
+    pub vertex: Option<A>,
+    pub callee: Option<A>,
 }
 
 pub struct RawThreadFlowV<A> {
@@ -284,6 +292,8 @@ pub struct CanonLocationV<A> {
 pub struct CanonStepV<A> {
     pub kinds: Seq<A>,
     pub location: Option<CanonLocationV<A>>,
+    pub vertex: Option<A>,
+    pub callee: Option<A>,
 }
 
 pub enum CanonThreadFlowV<A> {
@@ -362,6 +372,8 @@ impl<A> RawStep<A> {
                 Some(l) => Some(l@),
                 None => None,
             },
+            vertex: self.vertex,
+            callee: self.callee,
         }
     }
 }
@@ -405,6 +417,8 @@ impl<A> CanonStep<A> {
                 Some(l) => Some(l@),
                 None => None,
             },
+            vertex: self.vertex,
+            callee: self.callee,
         }
     }
 }

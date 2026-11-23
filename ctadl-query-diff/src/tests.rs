@@ -6,9 +6,10 @@ use tempfile::TempDir;
 use crate::driver::diff_with;
 use crate::{Atoms, CanonError, ErrorKind, Options, Report, diff_query, read_runs};
 
-/// A step at `line` of `a.c`, in the function at `index` of the run's table.
-fn step(order: i64, line: i64, index: usize) -> Value {
-    json!({
+/// A step at `line` of `a.c`, in the function at `index` of the run's table, with `props` as
+/// its property bag when given.
+fn step(order: i64, line: i64, index: usize, props: Option<&Value>) -> Value {
+    let mut s = json!({
         "executionOrder": order,
         "kinds": ["taint"],
         "location": {
@@ -18,15 +19,24 @@ fn step(order: i64, line: i64, index: usize) -> Value {
             },
             "logicalLocations": [{"index": index}]
         }
-    })
+    });
+    if let Some(p) = props {
+        s["properties"] = p.clone();
+    }
+    s
 }
 
 /// A `C0001.tainted-path` result whose flow visits `lines`, all in `main`.
 fn flow(lines: &[i64]) -> Value {
+    flow_with(lines, &[])
+}
+
+/// [`flow`], with `props[i]`, when it is there and not `None`, as step `i`'s property bag.
+fn flow_with(lines: &[i64], props: &[Option<Value>]) -> Value {
     let steps: Vec<Value> = lines
         .iter()
         .enumerate()
-        .map(|(i, &l)| step(i as i64 + 1, l, 0))
+        .map(|(i, &l)| step(i as i64 + 1, l, 0, props.get(i).and_then(Option::as_ref)))
         .collect();
     json!({
         "ruleId": "C0001.tainted-path",
@@ -78,6 +88,41 @@ fn doc(results: Vec<Value>) -> Value {
     })
 }
 
+/// `d` with `invocations` as its run's invocations.
+fn invoked(mut d: Value, invocations: Vec<Value>) -> Value {
+    d["runs"][0]["invocations"] = json!(invocations);
+    d
+}
+
+/// Step properties: a `call-arg` vertex at instruction `insn`, and a callee.
+fn step_props(insn: u32, callee: &str) -> Value {
+    json!({"taintVertex": format!("call-arg({insn}, 0)"), "callee": callee})
+}
+
+/// An invocation with status `ok` and `exit_code`, and execution `notifications`.
+fn invocation(ok: bool, exit_code: Option<i64>, notifications: Vec<Value>) -> Value {
+    let mut i = json!({"executionSuccessful": ok, "toolExecutionNotifications": notifications});
+    if let Some(c) = exit_code {
+        i["exitCode"] = json!(c);
+    }
+    i
+}
+
+/// An execution notification `id` at `level` about `function`, which is named only in the
+/// message's text and arguments.
+fn notification(id: &str, level: &str, function: &str) -> Value {
+    json!({
+        "descriptor": {"id": id},
+        "level": level,
+        "message": {
+            "id": "call-without-body",
+            "arguments": [function],
+            "text": format!("{function} has no body")
+        },
+        "properties": {"calls": 3}
+    })
+}
+
 fn base() -> Vec<Value> {
     vec![flow(&[3, 5, 7]), source(3), source(9)]
 }
@@ -100,9 +145,23 @@ fn diff(a: &Path, b: &Path) -> Report {
     diff_query(a, b, &Options::default()).unwrap()
 }
 
-fn counts(r: &Report) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+type Counts = (Vec<(usize, usize)>, Vec<(usize, usize)>);
+
+fn pair_counts(a: &crate::Samples, b: &crate::Samples) -> Counts {
     let c = |s: &crate::Samples| s.rows.iter().map(|r| (r.count_a, r.count_b)).collect();
-    (c(&r.more_in_a), c(&r.more_in_b))
+    (c(a), c(b))
+}
+
+fn counts(r: &Report) -> Counts {
+    pair_counts(&r.more_in_a, &r.more_in_b)
+}
+
+fn notification_counts(r: &Report) -> Counts {
+    pair_counts(&r.notifications_more_in_a, &r.notifications_more_in_b)
+}
+
+fn invocation_counts(r: &Report) -> Counts {
+    pair_counts(&r.invocations_more_in_a, &r.invocations_more_in_b)
 }
 
 #[test]
@@ -118,17 +177,47 @@ fn identical_self() {
 #[test]
 fn reordered_and_renumbered_is_identical() {
     let f = Files::new();
-    let a = f.write("a.sarif", &doc(base()));
+    // Every step of the flow has properties; B's vertices name another instruction.
+    let with_props = |insn| {
+        let mut results = base();
+        results[0] = flow_with(&[3, 5, 7], &vec![Some(step_props(insn, "snk")); 3]);
+        results
+    };
+    let a = invoked(
+        doc(with_props(12)),
+        vec![
+            invocation(
+                true,
+                Some(0),
+                vec![
+                    notification("N1", "warning", "f"),
+                    notification("N2", "note", "g"),
+                ],
+            ),
+            invocation(true, Some(0), vec![]),
+        ],
+    );
+    let a = f.write("a.sarif", &a);
     // Results reversed, messages changed, and a second table entry in front of `main`, with
-    // every reference renumbered to match.
-    let mut results = base();
+    // every reference renumbered to match. The notifications are reversed, their message text
+    // and arguments changed, and split over the two invocations, whose statuses are equal.
+    let mut results = with_props(99);
     results.reverse();
-    let mut b = doc(results);
+    let mut b = invoked(
+        doc(results),
+        vec![
+            invocation(true, Some(0), vec![notification("N2", "note", "h")]),
+            invocation(true, Some(0), vec![notification("N1", "warning", "k")]),
+        ],
+    );
     b["runs"][0]["logicalLocations"] = json!([{"name": "other"}, {"name": "main"}]);
     let mut text = b.to_string().replace("\"index\":0", "\"index\":1");
     text = text.replace("a flow", "another flow");
     let b = f.write("b.sarif", &serde_json::from_str(&text).unwrap());
-    assert!(diff(&a, &b).identical());
+    let r = diff(&a, &b);
+    assert!(r.identical(), "{}", r.to_text());
+    assert_eq!((r.notifications_a, r.notifications_b), (2, 2));
+    assert_eq!((r.invocations_a, r.invocations_b), (2, 2));
 }
 
 #[test]
@@ -152,39 +241,84 @@ fn duplicate_counts() {
     let f = Files::new();
     let mut more = base();
     more.push(source(9));
-    let a = f.write("a.sarif", &doc(more));
-    let b = f.write("b.sarif", &doc(base()));
+    let n = || notification("N1", "warning", "f");
+    let a = invoked(doc(more), vec![invocation(true, Some(0), vec![n()])]);
+    let b = invoked(doc(base()), vec![invocation(true, Some(0), vec![n(), n()])]);
+    let a = f.write("a.sarif", &a);
+    let b = f.write("b.sarif", &b);
     let r = diff(&a, &b);
     assert_eq!(counts(&r), (vec![(2, 1)], vec![]));
+    assert_eq!(notification_counts(&r), (vec![], vec![(1, 2)]));
+    assert_eq!(invocation_counts(&r), (vec![], vec![]));
+    assert!(
+        r.to_text()
+            .contains("more in B: 1 notifications, 0 not shown\n  [A 1, B 2] ")
+    );
 }
 
 #[test]
 fn small_diff_text() {
     let f = Files::new();
-    let a = f.write("a.sarif", &doc(vec![flow(&[3, 5, 7]), source(3)]));
-    let b = f.write("b.sarif", &doc(vec![flow(&[3, 6, 7]), source(3)]));
+    let invocations = |level: &str, exit_code: i64| {
+        vec![invocation(
+            true,
+            Some(exit_code),
+            vec![
+                notification("CTADL0111", level, "f"),
+                notification("CTADL0101", "note", "g"),
+            ],
+        )]
+    };
+    // The differing step has both properties; the others have none.
+    let props = [None, Some(step_props(12, "snk")), None];
+    let a = invoked(
+        doc(vec![flow_with(&[3, 5, 7], &props), source(3)]),
+        invocations("warning", 0),
+    );
+    let b = invoked(
+        doc(vec![flow_with(&[3, 6, 7], &props), source(3)]),
+        invocations("error", 1),
+    );
+    let a = f.write("a.sarif", &a);
+    let b = f.write("b.sarif", &b);
     let r = diff(&a, &b);
-    let step = |line: i64| {
+    let step = |line: i64, props: &str| {
         format!(
-            r#"{{"kinds":["taint"],"location":{{"physicalLocation":{{"artifactLocation":{{"uriBaseId":"SRC0","uri":"a.c"}},"region":{{"startLine":{line}}}}},"logicalLocations":["main"]}}}}"#
+            r#"{{"kinds":["taint"],"location":{{"physicalLocation":{{"artifactLocation":{{"uriBaseId":"SRC0","uri":"a.c"}},"region":{{"startLine":{line}}}}},"logicalLocations":["main"]}}{props}}}"#
         )
     };
+    let mid_props = r#","properties":{"taintVertex":"call-arg(_, 0)","callee":"snk"}"#;
     let result = |mid: i64| {
         format!(
             r#"{{"ruleId":"C0001.tainted-path","kind":"fail","level":"error","locations":[{{"physicalLocation":{{"artifactLocation":{{"uriBaseId":"SRC0","uri":"a.c"}},"region":{{"startLine":3}}}},"logicalLocations":["main"]}}],"codeFlows":[{{"threadFlows":[{{"locations":[{},{},{}]}}]}}],"properties":{{"taintLabels":["L"],"sourceFunctions":["src"],"sinkFunctions":["snk"]}}}}"#,
-            step(3),
-            step(mid),
-            step(7)
+            step(3, ""),
+            step(mid, mid_props),
+            step(7, "")
+        )
+    };
+    let note = |level: &str| {
+        format!(
+            r#"{{"descriptor":{{"id":"CTADL0111"}},"level":"{level}","message":{{"id":"call-without-body"}},"properties":{{"calls":3}}}}"#
         )
     };
     let want = format!(
         "DIFFERENT\nA: {}\nB: {}\nresults: A 2, B 2\n\
          more in A: 1 results, 0 not shown\n  [A 1, B 0] {}\n\
-         more in B: 1 results, 0 not shown\n  [A 0, B 1] {}\n",
+         more in B: 1 results, 0 not shown\n  [A 0, B 1] {}\n\
+         notifications: A 2, B 2\n\
+         more in A: 1 notifications, 0 not shown\n  [A 1, B 0] {}\n\
+         more in B: 1 notifications, 0 not shown\n  [A 0, B 1] {}\n\
+         invocations: A 1, B 1\n\
+         more in A: 1 invocations, 0 not shown\n  \
+         [A 1, B 0] {{\"executionSuccessful\":true,\"exitCode\":0}}\n\
+         more in B: 1 invocations, 0 not shown\n  \
+         [A 0, B 1] {{\"executionSuccessful\":true,\"exitCode\":1}}\n",
         a.display(),
         b.display(),
         result(5),
-        result(6)
+        result(6),
+        note("warning"),
+        note("error"),
     );
     assert_eq!(r.to_text(), want);
 }
@@ -251,8 +385,21 @@ fn output_is_deterministic() {
 #[test]
 fn limit_bounds_samples() {
     let f = Files::new();
-    let a = f.write("a.sarif", &doc((100..130).map(source).collect()));
-    let b = f.write("b.sarif", &doc(Vec::new()));
+    // Each side also has two notifications and two statuses the other has not.
+    let side = |ok: bool, codes: [i64; 2], ids: [&str; 2]| {
+        codes
+            .iter()
+            .zip(ids)
+            .map(|(&c, id)| invocation(ok, Some(c), vec![notification(id, "warning", "f")]))
+            .collect()
+    };
+    let a = invoked(
+        doc((100..130).map(source).collect()),
+        side(true, [0, 2], ["N1", "N2"]),
+    );
+    let b = invoked(doc(Vec::new()), side(false, [1, 3], ["N3", "N4"]));
+    let a = f.write("a.sarif", &a);
+    let b = f.write("b.sarif", &b);
     let with = |limit| {
         diff_query(
             &a,
@@ -272,7 +419,19 @@ fn limit_bounds_samples() {
         let r = with(limit);
         assert!(!r.identical(), "limit {limit}");
         assert_eq!(r.results_differ(), 30, "limit {limit}");
+        assert_eq!(r.notifications_differ(), 4, "limit {limit}");
+        assert_eq!(r.invocations_differ(), 4, "limit {limit}");
         assert_eq!(r.more_in_a.rows.len(), limit.min(30));
+        assert_eq!(r.more_in_b.rows.len(), 0);
+        for s in [
+            &r.notifications_more_in_a,
+            &r.notifications_more_in_b,
+            &r.invocations_more_in_a,
+            &r.invocations_more_in_b,
+        ] {
+            assert_eq!(s.rows.len(), limit.min(2), "limit {limit}");
+            assert_eq!(s.total(), 2, "limit {limit}");
+        }
     }
     for limit in [0, 1, 20] {
         let r = diff_query(
@@ -291,16 +450,45 @@ fn limit_bounds_samples() {
 #[test]
 fn json_matches_text() {
     let f = Files::new();
-    let a = f.write("a.sarif", &doc(base()));
+    let a = invoked(
+        doc(base()),
+        vec![invocation(
+            true,
+            Some(0),
+            vec![notification("N1", "warning", "f")],
+        )],
+    );
+    let a = f.write("a.sarif", &a);
     let mut fewer = base();
     fewer.remove(0);
-    let b = f.write("b.sarif", &doc(fewer));
+    let b = invoked(
+        doc(fewer),
+        vec![invocation(
+            false,
+            Some(1),
+            vec![notification("N1", "error", "f")],
+        )],
+    );
+    let b = f.write("b.sarif", &b);
     for (x, y) in [(&a, &a), (&a, &b)] {
         let r = diff(x, y);
         let j: Value = serde_json::from_str(&r.to_json()).unwrap();
         let first = r.to_text().lines().next().unwrap().to_string();
         assert_eq!(j["result"], json!(first));
         assert_eq!(j["results_differ"], json!(r.results_differ()));
+        assert_eq!(j["notifications_differ"], json!(r.notifications_differ()));
+        assert_eq!(j["invocations_differ"], json!(r.invocations_differ()));
+        assert_eq!(
+            j["notifications_more_in_b"]["rows"]
+                .as_array()
+                .unwrap()
+                .len(),
+            r.notifications_more_in_b.rows.len()
+        );
+        assert_eq!(
+            j["invocations_more_in_a"]["rows"].as_array().unwrap().len(),
+            r.invocations_more_in_a.rows.len()
+        );
         assert_eq!(
             j["more_in_a"]["rows"].as_array().unwrap().len(),
             r.more_in_a.rows.len()
@@ -308,6 +496,8 @@ fn json_matches_text() {
         assert_eq!(j["a"], json!(x.display().to_string()));
         assert_eq!(j["endpoints_only"], json!(false));
     }
+    let r = diff(&a, &b);
+    assert_eq!((r.notifications_differ(), r.invocations_differ()), (2, 2));
 }
 
 #[test]
@@ -335,6 +525,128 @@ fn endpoints_only() {
     let a = f.write("sa.sarif", &doc(vec![source(3)]));
     let b = f.write("sb.sarif", &doc(vec![source(4)]));
     assert!(!diff_query(&a, &b, &ends).unwrap().identical());
+
+    // Each endpoint's properties are compared; an interior step's are not.
+    let props = |vertex: [u32; 3], callee: [&str; 3]| {
+        let ps: Vec<Option<Value>> = vertex
+            .iter()
+            .zip(callee)
+            .map(|(&v, c)| Some(json!({"taintVertex": format!("call-arg(1, {v})"), "callee": c})))
+            .collect();
+        doc(vec![flow_with(&[3, 5, 7], &ps)])
+    };
+    let a = f.write("pa.sarif", &props([0, 0, 0], ["f", "g", "h"]));
+    for (name, b, same) in [
+        ("interior.sarif", props([0, 1, 0], ["f", "g", "h"]), true),
+        ("first.sarif", props([1, 0, 0], ["f", "g", "h"]), false),
+        ("last.sarif", props([0, 0, 0], ["f", "g", "k"]), false),
+    ] {
+        let b = f.write(name, &b);
+        assert!(!diff(&a, &b).identical(), "{name}");
+        let r = diff_query(&a, &b, &ends).unwrap();
+        assert_eq!(r.identical(), same, "{name}");
+        if !same {
+            assert_eq!(counts(&r), (vec![(1, 0)], vec![(0, 1)]), "{name}");
+        }
+    }
+
+    // Notifications and statuses are compared as without the flag.
+    let with = |ok: bool, level: &str| {
+        invoked(
+            doc(vec![flow(&[3, 5, 7])]),
+            vec![invocation(
+                ok,
+                Some(0),
+                vec![notification("N1", level, "f")],
+            )],
+        )
+    };
+    let a = f.write("na.sarif", &with(true, "warning"));
+    for (name, b, want) in [
+        ("nb.sarif", with(true, "error"), (2, 0)),
+        ("ib.sarif", with(false, "warning"), (0, 2)),
+    ] {
+        let b = f.write(name, &b);
+        let r = diff_query(&a, &b, &ends).unwrap();
+        assert!(!r.identical(), "{name}");
+        assert_eq!(r.results_differ(), 0, "{name}");
+        assert_eq!(
+            (r.notifications_differ(), r.invocations_differ()),
+            want,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn step_properties_compared() {
+    let f = Files::new();
+    let with = |props: Option<Value>| doc(vec![flow_with(&[3, 5, 7], &[None, props])]);
+    let a = f.write("a.sarif", &with(Some(step_props(12, "snk"))));
+    for (name, b) in [
+        (
+            "vertex.sarif",
+            with(Some(
+                json!({"taintVertex": "call-arg(12, 1)", "callee": "snk"}),
+            )),
+        ),
+        ("callee.sarif", with(Some(step_props(12, "snk2")))),
+        ("no_vertex.sarif", with(Some(json!({"callee": "snk"})))),
+        (
+            "no_callee.sarif",
+            with(Some(json!({"taintVertex": "call-arg(12, 0)"}))),
+        ),
+        ("no_props.sarif", with(None)),
+    ] {
+        let b = f.write(name, &b);
+        let r = diff(&a, &b);
+        assert!(!r.identical(), "{name}");
+        assert_eq!(counts(&r), (vec![(1, 0)], vec![(0, 1)]), "{name}");
+    }
+    // Another instruction id, or a property the comparison does not read, is no difference.
+    for (name, b) in [
+        ("insn.sarif", with(Some(step_props(13, "snk")))),
+        (
+            "other.sarif",
+            with(Some(
+                json!({"taintVertex": "call-arg(12, 0)", "callee": "snk", "x": 1}),
+            )),
+        ),
+    ] {
+        let b = f.write(name, &b);
+        assert!(diff(&a, &b).identical(), "{name}");
+    }
+}
+
+#[test]
+fn status_compared() {
+    let f = Files::new();
+    let with = |invocations: Vec<Value>| invoked(doc(base()), invocations);
+    let status = |ok, code| with(vec![invocation(ok, code, vec![])]);
+    let a = f.write("a.sarif", &status(true, Some(0)));
+    for (name, b, want) in [
+        ("failed.sarif", status(false, Some(0)), (1, 1)),
+        ("code.sarif", status(true, Some(1)), (1, 1)),
+        ("absent.sarif", status(true, None), (1, 1)),
+        ("none.sarif", doc(base()), (1, 0)),
+    ] {
+        let b = f.write(name, &b);
+        let r = diff(&a, &b);
+        assert!(!r.identical(), "{name}");
+        assert_eq!(r.results_differ(), 0, "{name}");
+        assert_eq!(r.notifications_differ(), 0, "{name}");
+        assert_eq!(
+            (
+                r.invocations_more_in_a.total(),
+                r.invocations_more_in_b.total()
+            ),
+            want,
+            "{name}"
+        );
+    }
+    let absent = f.write("absent_a.sarif", &status(true, None));
+    let absent_too = f.write("absent_b.sarif", &status(true, None));
+    assert!(diff(&absent, &absent_too).identical());
 }
 
 #[test]
@@ -359,6 +671,11 @@ fn errors_are_errors() {
     empty["runs"][0]["results"][0]["codeFlows"][0]["threadFlows"][0]["locations"] = json!([]);
     let empty = f.write("empty.sarif", &empty);
 
+    let mut bad_callee = doc(base());
+    bad_callee["runs"][0]["results"][0]["codeFlows"][0]["threadFlows"][0]["locations"][1]["properties"] =
+        json!({"callee": 3});
+    let bad_callee = f.write("callee.sarif", &bad_callee);
+
     for endpoints_only in [false, true] {
         let opts = Options {
             endpoints_only,
@@ -367,6 +684,7 @@ fn errors_are_errors() {
         for (bad, canon) in [
             (&missing, None),
             (&not_json, None),
+            (&bad_callee, None),
             (&out_of_range, Some(CanonError::OutOfRange)),
             (&not_increasing, Some(CanonError::NotIncreasing)),
             (&empty, Some(CanonError::EmptyFlow)),

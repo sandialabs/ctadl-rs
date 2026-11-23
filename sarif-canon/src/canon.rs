@@ -59,9 +59,23 @@ pub open spec fn spec_canon_step<A>(
     s: RawStepV<A>,
 ) -> Result<CanonStepV<A>, Error> {
     match s.location {
-        None => Ok(CanonStepV { kinds: spec_canon_bag(oa, s.kinds), location: None }),
+        None => Ok(
+            CanonStepV {
+                kinds: spec_canon_bag(oa, s.kinds),
+                location: None,
+                vertex: s.vertex,
+                callee: s.callee,
+            },
+        ),
         Some(l) => match spec_canon_location(oa, t, l) {
-            Ok(c) => Ok(CanonStepV { kinds: spec_canon_bag(oa, s.kinds), location: Some(c) }),
+            Ok(c) => Ok(
+                CanonStepV {
+                    kinds: spec_canon_bag(oa, s.kinds),
+                    location: Some(c),
+                    vertex: s.vertex,
+                    callee: s.callee,
+                },
+            ),
             Err(e) => Err(e),
         },
     }
@@ -751,7 +765,14 @@ fn canon_step<A: Copy, F: Fn(&A, &A) -> Ordering>(
         None => None,
         Some(l) => Some(canon_location(l, table, cmp, Ghost(oa))?),
     };
-    Ok(CanonStep { kinds: bag_atoms(copy_atoms(&s.kinds), cmp, Ghost(oa)), location })
+    Ok(
+        CanonStep {
+            kinds: bag_atoms(copy_atoms(&s.kinds), cmp, Ghost(oa)),
+            location,
+            vertex: s.vertex,
+            callee: s.callee,
+        },
+    )
 }
 
 fn canon_thread_flow<A: Copy, F: Fn(&A, &A) -> Ordering>(
