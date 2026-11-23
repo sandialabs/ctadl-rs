@@ -5,15 +5,19 @@ structured step properties, which `diff-query` then compares: `taintVertex`, a s
 `callees`, always a list of function names. There is no separate `callee` property;
 `diff-query` reads `callees` in its place and compares it as a set.
 
-- A call step's `callees` is the one function called.
+- A call step's `callees` is the one function the path enters. The step at such a call is
+  usually written for the call's argument vertex, not for the call edge
+  (`ctadl-ascent/src/query_engine/formatter.rs:2959`), so it is classified by the path edge
+  that leaves that vertex.
 - A return step's `callees` is the one function returned from. The message keeps naming the
-  function returned into, the caller (`ctadl-ascent/src/query_engine/formatter.rs:2920`).
-  A call site with several callees does not change either: the edge the step traverses names
+  function returned into, the caller (`formatter.rs:2920`).
+  A call site with several callees does not change either: the edge the path traverses names
   one.
 - A source or sink step's `callees` is every callee of its call site. The endpoint does not
   record which of them its model named.
-- A step for a call crossed by its summary has no `callees`: nothing records which callee's
-  summary carried the taint.
+- A step at a call the path crosses by a summary, without entering a callee, has
+  `summarized: true` and no `callees`: nothing records which callee's summary carried the
+  taint. `diff-query` compares the flag.
 
 Which steps a flow has does not change. A flow has one source and one sink endpoint, but
 its first or last step is not always theirs: the sink step is dropped when the step before
