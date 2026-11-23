@@ -64,7 +64,7 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
 | Term | Meaning |
 | --- | --- |
 | **Step** | A `threadFlowLocation` of a code flow. |
-| **Step properties** | In a step's `properties` bag: `taintVertex`, a string; `callees`, a list of strings; `summarized`, the boolean `true`. There is no `callee` property. |
+| **Step properties** | In a step's `properties` bag: `taintVertex`, a string; `callee`, a string; `summarized`, the boolean `true`. |
 | **The site's callees** | Every function the final call graph gives a call site. |
 | **Call step** | A step at a call the path enters: a call edge leaves the step's vertex, or the step is the call edge's own. |
 | **Return step** | A step written for a return edge. |
@@ -77,18 +77,17 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
 - R1. **`taintVertex` on every step.** Every step has a `taintVertex`: the vertex its message
   names, as `<variable><path>`, the form the result property of that name has
   (`formatter.rs:3325`).
-- R2. **`callees` on a call or return step.** A call step's `callees` is one name, the
-  function the path enters. A return step's `callees` is one name, the function returned
-  from, which the step's message does not name. The other callees of the site are not
-  listed.
+- R2. **`callee` on a call or return step.** A call step's `callee` is the function the path
+  enters. A return step's `callee` is the function returned from, which the step's message
+  does not name. The other callees of the site are not written on the step.
 - R3. **A source or sink step has `taintVertex` only.** The callees of its call site are in
   the result's `sourceFunctions` or `sinkFunctions` (R9) and are not repeated on the step.
 - R4. **`summarized` on a summarized step.** A summarized step has `summarized: true` and no
-  `callees`: nothing records which callee's summary carried the taint. No other step has
+  `callee`: nothing records which callee's summary carried the taint. No other step has
   `summarized`.
-- R5. **Every interior step says something about callees.** Every step but a source or sink
-  step has `callees` or `summarized`, never both.
-- R6. **Ids.** `callees` and `summarized` do not depend on function ids, instruction ids or
+- R5. **Every interior step says something about its callee.** Every step but a source or
+  sink step has `callee` or `summarized`, never both.
+- R6. **Ids.** `callee` and `summarized` do not depend on function ids, instruction ids or
   the order of the call list. `taintVertex` holds one index-local number, the instruction id
   in a `call-arg` vertex, as the result property of that name does; `diff-query` drops it
   before comparing (`ctadl-query-diff/src/parse.rs:415`).
@@ -111,55 +110,51 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
 
 **What `diff-query` compares**
 
-- R12. **`callees` and `summarized`, not `callee`.** A step is compared by its `kinds`, its
-  location, its `taintVertex`, its `callees` and its `summarized`. `callees` is compared as a
-  set: the order written does not matter. For each, absent compares equal only to absent.
-  Under `--endpoints-only` the first and last step's are compared. A printed step shows both.
-  A step's `callee` is no longer read.
-- R13. **Malformed input.** A step `callees` that is not a list of strings, or a `summarized`
-  that is not a boolean, is an error (exit 2).
+- R12. **`callee` and `summarized`.** A step is compared by its `kinds`, its location, its
+  `taintVertex`, its `callee` and its `summarized`. For each, absent compares equal only to
+  absent. Under `--endpoints-only` the first and last step's are compared. A printed step
+  shows both.
+- R13. **Malformed input.** A step `taintVertex` or `callee` that is not a string, or a
+  `summarized` that is not a boolean, is an error (exit 2).
 - R14. **Old files.** Files `ctadl query` wrote before this change compare as they did.
 - R15. **Renumbering is invisible.** Two queries of one program, indexed so that its function
   and instruction ids differ, compare `IDENTICAL`, with and without `--endpoints-only`, in
   every profile. This holds for a program whose source or sink is at a call site with
   several callees.
-- R16. **Theorems.** `sarif-canon`'s canonical step holds `callees` and `summarized` in
-  place of `callee`, and its Verus theorems are restated for them: a step's `callees` is one
-  of the unordered collections `theorem_canon_invariant` lets a rewrite permute, and
-  `summarized` is compared by equality. Nothing else in the statements changes, and they
-  verify.
+- R16. **Theorems.** `sarif-canon`'s canonical step holds `summarized` beside `callee`, and
+  the definitions its Verus theorems are stated with ask a step's `summarized` to be equal
+  where they ask its `callee` to be. Nothing else in the statements changes, and they verify.
 
 **Tests and documents**
 
 - R17. **Tests on real properties.** The metamorphic tests of `diff-query` run on the
   properties `ctadl query` wrote, not on ones the test added. A changed `taintVertex` or
-  `callees`, or a removed `summarized`, is reported, at an interior step only without
-  `--endpoints-only`. Renumbered instruction ids and a reordered `callees` are not.
+  `callee`, or a removed `summarized`, is reported, at an interior step only without
+  `--endpoints-only`. Renumbered instruction ids are not.
 - R18. **What each step says is tested.** Tests check the properties of each kind of step: a
   call step at a site with two callees, of which the path enters one; a return step; a
   summarized step, both between two arguments and into a global; a source or sink step at a
   site with two callees, whose result's `sourceFunctions` or `sinkFunctions` holds both. On
-  every flow the tests query, each step but the source and sink steps has `callees` or
+  every flow the tests query, each step but the source and sink steps has `callee` or
   `summarized`.
 - R19. **Documents.** `docs/debugging.md` (`:259`), the `diff-query` help text
   (`ctadl-ascent/src/main.rs:93`) and `docs/spec.md` (§5, `:261`) no longer say the
-  properties are not written, and name `callees` and `summarized` where they named `callee`.
-  `docs/spec.md` §4.5 says a step carries them. `docs/debugging.md` says which step has
-  which property, what `callees` holds on a return step, and when a flow's first or last step
-  is not its source or sink. None of them, and no code comment, cites a number from this
-  document.
+  properties are not written, and name `summarized` beside `callee`. `docs/spec.md` §4.5
+  says a step carries them. `docs/debugging.md` says which step has which property, what
+  `callee` holds on a return step, and when a flow's first or last step is not its source or
+  sink. None of them, and no code comment, cites a number from this document.
 
 ## Design
 
 ### D1. What a step says (R1–R5, R7, R8)
 
 One small value describes a step before it is written: its vertex (`FlowVariable`, `Path`),
-what it says about callees, and the function its message names. `push_site_step`
+what it says about its callee, and the function its message names. `push_site_step`
 (`formatter.rs:2801`) takes it in place of the finished message string, and renders both the
 message and the property bag from it. The message and the properties then cannot disagree
 about the vertex.
 
-| Step | `taintVertex` | `callees` | `summarized` | Message names |
+| Step | `taintVertex` | `callee` | `summarized` | Message names |
 | --- | --- | --- | --- | --- |
 | source, sink | endpoint vertex | | | the site's first callee by name |
 | call | its vertex | the function entered | | that function |
@@ -202,31 +197,20 @@ that want one function keep it: step messages and the source and sink results
 list (R15). That list is where an endpoint's callees are written, once per result; the
 endpoint's step does not repeat it (R3).
 
-### D3. `callees` and `summarized` in `diff-query` (R12–R14, R16)
+### D3. `summarized` in `diff-query` (R12–R14, R16)
 
-The raw and the canonical step (`sarif-canon/src/types.rs:134`, `:186`, and their views at
-`:267`, `:296`) get two fields in place of `callee`:
+The raw and the canonical step keep `callee`, one optional atom
+(`sarif-canon/src/types.rs:134`, `:186`, and their views at `:267`, `:296`), and get
+`summarized`, an optional boolean, copied as is. The order on steps
+(`sarif-canon/src/order.rs:169`) compares it last, absent first.
 
-- `callees`, an optional list of atoms. It is a bag, as a result's `sourceFunctions` is
-  (`types.rs:79`): the canonical form sorts it (`spec_canon_atoms`,
-  `sarif-canon/src/canon.rs:144`), and the order on steps compares it as the other optional
-  bags are compared (`sarif-canon/src/order.rs:147`).
-- `summarized`, an optional boolean, copied as is and compared by equality, absent first.
+The theorems' definitions follow: `step_permuted` (`sarif-canon/src/theorems.rs:91`) and
+`step_renumbered` (`theorems.rs:162`) each ask the two steps' `summarized` to be equal, as
+they ask of `callee`.
 
-The theorems' definitions follow. `step_permuted` (`sarif-canon/src/theorems.rs:91`) relates
-two steps whose `callees` are permutations of each other and whose `summarized` are equal;
-`step_renumbered` (`theorems.rs:162`) asks both to be equal. So a reordered `callees` is
-proved not to change the canonical form, by the lemma that already covers a result's bags
-(`theorems.rs:665`).
-
-`step` (`ctadl-query-diff/src/parse.rs:228`) reads `callees` and `summarized` in place of
-`callee`. It drops a repeated name from `callees` before it hands the list over, so the list
-is compared as a set (R12) while the verified code keeps comparing bags; dropping duplicates
-is the parser's, covered by its tests, not by the proofs. `render.rs:99` prints both under
-`properties`.
-
-Invariant: the canonical step is a function of the set of names and the flag only, so equal
-content gives equal steps and unequal content gives unequal ones.
+`step` (`ctadl-query-diff/src/parse.rs:228`) reads `summarized` beside `taintVertex` and
+`callee`. `render.rs:99` prints it under `properties`. A file written before this change has
+neither property on a step, and compares as it did (R14).
 
 ### D4. Tests (R15, R17, R18)
 
