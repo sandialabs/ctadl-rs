@@ -463,6 +463,15 @@ behavior changes. None of them cites a number from the spec or this plan.
     grep -nE '\b(R|D|P)[0-9]+\b|Phase [0-9]' docs/debugging.md ctadl-ascent/src/main.rs   # no new hit
     cargo fmt --all -- --check && cargo clippy --workspace -- -Dwarnings
 
+**As built** (`be5e73ab9`). The examples were regenerated from `xfer.c` with `sink(s);`
+inserted at line 14, the edit the existing example was made from, not from `ties.c`. The real
+run differs in two notifications per side (the endpoint summary's `sinksMatched` and `sink`'s
+`call-without-body` count) and in no invocation. The sink result the old example showed as
+`[A 1, B 2]` with only a logical location now has a physical location in every profile and
+shows as `[A 0, B 1]`, so the sentence pointing at that line was dropped. The help text does
+not name the `call-arg` instruction id separately; "instruction … ids" among the numbers local
+to a run covers it.
+
 ## Phase 7: TaintBench, run twice (R10)
 
 Depends on: 5, 6 (it measures the finished branch).
