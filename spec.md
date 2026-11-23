@@ -100,42 +100,44 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
   its vertex appears nowhere. So a flow's first or last step is not always its source or sink
   step (Background), and `--endpoints-only` then compares the step that is there.
 - R9. **Results at a site with several callees.** A `C0001` result's `sourceFunctions` and
-  `sinkFunctions` hold all of the callees of its endpoints' sites, and `sourceCallee` and
-  `sinkCallee` the first of each. A `C0003`/`C0004` result's message and logical location
-  name the first by name.
-- R10. **Nothing else changes.** At a call site with one callee, results, their properties,
-  notifications, invocations and message text are byte for byte what they were. The `machine`
-  profile writes no steps, so only R9 can change its output.
+  `sinkFunctions` hold all of the callees of its endpoints' sites. A `C0003`/`C0004` result's
+  message and logical location name the first by name.
+- R10. **No `sourceCallee` or `sinkCallee`.** A `C0001` result does not have them. Each
+  repeated the first entry of `sourceFunctions` or `sinkFunctions`.
+- R11. **Nothing else changes.** At a call site with one callee, results, their properties
+  but those two, notifications, invocations and message text are byte for byte what they
+  were. The `machine`
+  profile writes no steps, so only R9 and R10 can change its output.
 
 **What `diff-query` compares**
 
-- R11. **`callees` and `summarized`, not `callee`.** A step is compared by its `kinds`, its
+- R12. **`callees` and `summarized`, not `callee`.** A step is compared by its `kinds`, its
   location, its `taintVertex`, its `callees` and its `summarized`. `callees` is compared as a
   set: the order written does not matter. For each, absent compares equal only to absent.
   Under `--endpoints-only` the first and last step's are compared. A printed step shows both.
   A step's `callee` is no longer read.
-- R12. **Malformed input.** A step `callees` that is not a list of strings, or a `summarized`
+- R13. **Malformed input.** A step `callees` that is not a list of strings, or a `summarized`
   that is not a boolean, is an error (exit 2).
-- R13. **Old files.** Files `ctadl query` wrote before this change compare as they did.
-- R14. **Renumbering is invisible.** Two queries of one program, indexed so that its function
+- R14. **Old files.** Files `ctadl query` wrote before this change compare as they did.
+- R15. **Renumbering is invisible.** Two queries of one program, indexed so that its function
   and instruction ids differ, compare `IDENTICAL`, with and without `--endpoints-only`, in
   every profile. This holds for a program whose source or sink is at a call site with
   several callees.
-- R15. **Proofs.** `sarif-canon` and its Verus theorems do not change.
+- R16. **Proofs.** `sarif-canon` and its Verus theorems do not change.
 
 **Tests and documents**
 
-- R16. **Tests on real properties.** The metamorphic tests of `diff-query` run on the
+- R17. **Tests on real properties.** The metamorphic tests of `diff-query` run on the
   properties `ctadl query` wrote, not on ones the test added. A changed `taintVertex` or
   `callees`, or a removed `summarized`, is reported, at an interior step only without
   `--endpoints-only`. Renumbered instruction ids and a reordered `callees` are not.
-- R17. **What each step says is tested.** Tests check the properties of each kind of step: a
+- R18. **What each step says is tested.** Tests check the properties of each kind of step: a
   call step at a site with two callees, of which the path enters one; a return step; a
   summarized step, both between two arguments and into a global; a source or sink step at a
   site with two callees, whose result's `sourceFunctions` or `sinkFunctions` holds both. On
   every flow the tests query, each step but the source and sink steps has `callees` or
   `summarized`.
-- R18. **Documents.** `docs/debugging.md` (`:259`), the `diff-query` help text
+- R19. **Documents.** `docs/debugging.md` (`:259`), the `diff-query` help text
   (`ctadl-ascent/src/main.rs:93`) and `docs/spec.md` (§5, `:261`) no longer say the
   properties are not written, and name `callees` and `summarized` where they named `callee`.
   `docs/spec.md` §4.5 says a step carries them. `docs/debugging.md` says which step has
@@ -177,41 +179,46 @@ Invariant: the dedup test (`formatter.rs:2847`) does not read the new value. Whe
 is written depends on what it did before (R8). A dropped step's classification is lost with
 it: when a summarized crossing's first `call-arg` step is dropped, the call is not marked.
 
-### D2. The site's callees (R6, R7, R9)
+### D2. The site's callees (R6, R7, R9, R10)
 
 `call_callee` (`formatter.rs:2571`) becomes a map from a site to its callees, sorted by name
 and then deduplicated by name. Names come from `facts.id_to_name`; a function with no name
 takes the `func#<id>` text the message already uses. The map holds one entry per row of
 `facts.call`, which is what the vector it is built from holds.
 
+`sourceCallee` and `sinkCallee` are no longer written (`formatter.rs:3233`, `:3240`). The
+test that reads `sinkCallee` (`ctadl-ascent/tests/integration/cli.rs:297`) reads
+`sinkFunctions`. `diff-query` never compared the two and still ignores them in older files;
+`docs/debugging.md:271` says they are properties older files hold.
+
 `endpoint_callee` (`formatter.rs:3286`) returns the first of a site's callees. Its users
 that want one function keep it: step messages and the source and sink results
 (`formatter.rs:3328`). A path result's `sourceFunctions` and `sinkFunctions`
 (`formatter.rs:3210`) take the whole list, so they no longer depend on the order of the call
-list (R14). That list is where an endpoint's callees are written, once per result; the
+list (R15). That list is where an endpoint's callees are written, once per result; the
 endpoint's step does not repeat it (R3).
 
-### D3. `callees` and `summarized` in `diff-query` (R11–R13, R15)
+### D3. `callees` and `summarized` in `diff-query` (R12–R14, R16)
 
 The canonical step keeps its one optional atom for the callee
 (`sarif-canon/src/types.rs:134`, `:186`); only what the parser puts in it changes. `step`
 (`ctadl-query-diff/src/parse.rs:228`) reads `callees` and `summarized` in place of `callee`.
 When the step has neither, the atom is absent. Otherwise the atom is the text of a JSON
 object with the keys the step has: `callees` as the list sorted with duplicates dropped,
-`summarized` as written. So `sarif-canon` is untouched (R15). The set comparison of R11 is
+`summarized` as written. So `sarif-canon` is untouched (R16). The set comparison of R12 is
 the parser's, covered by its tests, not by the proofs; the execution notifications are
 canonicalized the same way. `render.rs:99` prints the object's keys back under `properties`.
 
 Invariant: the canonical text is a function of the set of names and the flag only, so equal
 content gives one atom and unequal content gives two.
 
-### D4. Tests (R14, R16, R17)
+### D4. Tests (R15, R17, R18)
 
 `with_step_props` and the "with step properties" bases (`diff_query.rs:199`, `:224`) go: the
-real output is the base. `renumbered_ids` (`diff_query.rs:757`) then covers R14 for
+real output is the base. `renumbered_ids` (`diff_query.rs:757`) then covers R15 for
 `ties.c`. A second fixture has a call through a function pointer or a virtual call that
 resolves to two functions, with a flow that enters one of them and a source or sink at such
-a call; it is indexed twice, with the callees' ids in opposite orders. It covers R14 and R17
+a call; it is indexed twice, with the callees' ids in opposite orders. It covers R15 and R18
 for several callees.
 
 The regression suite's readers of message text (`xtask/src/assertions.rs:204`, `:223`) do not

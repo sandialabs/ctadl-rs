@@ -21,6 +21,9 @@ structured step properties, which `diff-query` then compares: `taintVertex`, a s
   entering a callee. It has `summarized: true` and no `callees`: nothing records which callee's summary carried the
   taint. `diff-query` compares the flag.
 
+A path result no longer has `sourceCallee` and `sinkCallee`: each repeated the first entry of
+`sourceFunctions` or `sinkFunctions`, and neither is in the SARIF standard.
+
 Which steps a flow has does not change. A flow has one source and one sink endpoint, but
 its first or last step is not always theirs: the sink step is dropped when the step before
 it is at the same instruction (`formatter.rs:2847`), and an endpoint with no call site gets
