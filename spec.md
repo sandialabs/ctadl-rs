@@ -1,7 +1,7 @@
 # Step properties written by `ctadl query`: requirements and design - DO-NOT-MERGE
 
-Source: `intent.md`. This refines what `ctadl query` writes on each step of a code flow, and adds
-the one property `ctadl diff-query` does not read yet. It
+Source: `intent.md`. This refines what `ctadl query` writes on each step of a code flow, and how
+`ctadl diff-query` reads it. It
 must stay consistent with `docs/spec.md` (F9, F12, §4.5, §5) and `docs/debugging.md`
 (*Comparing two query outputs*). It does not sequence the work.
 
@@ -54,7 +54,7 @@ must stay consistent with `docs/spec.md` (F9, F12, §4.5, §5) and `docs/debuggi
 | Term | Meaning |
 | --- | --- |
 | **Step** | A `threadFlowLocation` of a code flow. |
-| **Step properties** | In a step's `properties` bag: `taintVertex` and `callee`, each a string, and `callees`, a list of strings. |
+| **Step properties** | In a step's `properties` bag: `taintVertex`, a string, and `callees`, a list of strings. There is no `callee` property. |
 | **The site's callees** | Every function the final call graph gives a call site. |
 | **Edge step** | A step written for a call or return edge of the path. |
 | **Summarized-call step** | A step written for an interior `call-arg` vertex, where the path crosses a call by the callee's summary. |
@@ -66,11 +66,11 @@ must stay consistent with `docs/spec.md` (F9, F12, §4.5, §5) and `docs/debuggi
 - R1. **`taintVertex` on every step.** Every step has a `taintVertex`: the vertex its message
   names, as `<variable><path>`, the form the result property of that name has
   (`formatter.rs:3325`).
-- R2. **`callee` on an edge step.** A call step's `callee` is the name of the function called.
-  A return step's `callee` is the name of the function returned from, which the step's
-  message does not name. No other step has `callee`.
-- R3. **`callees` on a source or sink step.** A source or sink step has `callees`: the names
-  of the site's callees, each once, sorted. No other step has `callees`.
+- R2. **`callees` on an edge step.** A call step's `callees` is one name, the function
+  called. A return step's `callees` is one name, the function returned from, which the
+  step's message does not name.
+- R3. **`callees` on a source or sink step.** A source or sink step's `callees` is the names
+  of the site's callees, each once, sorted.
 - R4. **Nothing on a summarized-call step.** A summarized-call step has `taintVertex` only.
   The edge it stands for does not say which callee's summary carried the taint.
 - R5. **By content.** No step property depends on function ids or on the order of the call
@@ -91,33 +91,34 @@ must stay consistent with `docs/spec.md` (F9, F12, §4.5, §5) and `docs/debuggi
 
 **What `diff-query` compares**
 
-- R10. **`callees`.** A step is compared by its `callees` too, as a set: the order written
-  does not matter, and absent compares equal only to absent. Under `--endpoints-only` the
-  first and last step's `callees` are compared. A printed step shows it.
+- R10. **`callees`, not `callee`.** A step is compared by its `kinds`, its location, its
+  `taintVertex` and its `callees`. `callees` is compared as a set: the order written does not
+  matter, and absent compares equal only to absent. Under `--endpoints-only` the first and
+  last step's `callees` are compared. A printed step shows it as a list. A step's `callee`
+  is no longer read; `ctadl query` never wrote one.
 - R11. **Malformed input.** A step `callees` that is not a list of strings is an error (exit
-  2), as a `callee` that is not a string is.
-- R12. **Old files.** Files written before this change compare as they did.
+  2).
+- R12. **Old files.** Files `ctadl query` wrote before this change compare as they did.
 - R13. **Renumbering is invisible.** Two queries of one program, indexed so that its function
   and instruction ids differ, compare `IDENTICAL`, with and without `--endpoints-only`, in
   every profile. This holds for a program whose source or sink is at a call site with
   several callees.
-- R14. **Proofs.** The Verus theorems of `sarif-canon` still hold with `callees` in the
-  canonical step.
+- R14. **Proofs.** `sarif-canon` and its Verus theorems do not change.
 
 **Tests and documents**
 
 - R15. **Tests on real properties.** The metamorphic tests of `diff-query` run on the
-  properties `ctadl query` wrote, not on ones the test added. A changed `taintVertex`,
-  `callee` or `callees` is reported, at an interior step only without `--endpoints-only`.
+  properties `ctadl query` wrote, not on ones the test added. A changed `taintVertex`
+  or `callees` is reported, at an interior step only without `--endpoints-only`.
   Renumbered instruction ids and a reordered `callees` are not.
 - R16. **What each step says is tested.** A test checks, on a flow that has all four kinds of
-  step, the properties of each: the return step's `callee`, a source or sink step's `callees`
-  at a site with two callees, and that a summarized-call step has neither.
+  step, the properties of each: the return step's `callees`, a source or sink step's `callees`
+  at a site with two callees, and that a summarized-call step has none.
 - R17. **Documents.** `docs/debugging.md` (`:259`), the `diff-query` help text
   (`ctadl-ascent/src/main.rs:93`) and `docs/spec.md` (§5, `:261`) no longer say the
-  properties are not written, and name `callees` wherever they name `callee`. `docs/spec.md`
+  properties are not written, and name `callees` where they named `callee`. `docs/spec.md`
   §4.5 says a step carries them. `docs/debugging.md` says which step has which property,
-  what `callee` holds on a return step, and when a flow's first or last step is not its
+  what `callees` holds on a return step, and when a flow's first or last step is not its
   source or sink. None of them, and no code comment, cites a number from this document.
 
 ## Design
@@ -130,12 +131,12 @@ its message names. `push_site_step` (`formatter.rs:2801`) takes it in place of t
 message string, and renders both the message and the property bag from it. The message and
 the properties then cannot disagree about the vertex.
 
-| Step | `taintVertex` | `callee` | `callees` | Message names |
-| --- | --- | --- | --- | --- |
-| source, sink | endpoint vertex | | the site's callees | their first by name |
-| call edge | destination vertex | destination's function | | `callee` |
-| return edge | destination vertex | origin's function | | destination's function |
-| summarized call | the `call-arg` vertex | | | the site's first callee by name, else the enclosing function |
+| Step | `taintVertex` | `callees` | Message names |
+| --- | --- | --- | --- |
+| source, sink | endpoint vertex | the site's callees | their first by name |
+| call edge | destination vertex | destination's function | that function |
+| return edge | destination vertex | origin's function | destination's function |
+| summarized call | the `call-arg` vertex | absent | the site's first callee by name, else the enclosing function |
 
 The vertex is formatted by the one expression the result property uses
 (`formatter.rs:3325`), shared, not copied. The bag goes on the `ThreadFlowLocation`, where
@@ -161,21 +162,16 @@ the call list, so `callees` is never empty.
 
 ### D3. `callees` in `diff-query` (R10–R12, R14)
 
-`RawStep` and `CanonStep` (`sarif-canon/src/types.rs:125`, `:181`) gain one optional atom,
-`callees`, as do their Verus views (`types.rs:262`, `:292`). `canon_step`
-(`sarif-canon/src/canon.rs:751`) copies it; `ord_step` and `cmp_step`
-(`sarif-canon/src/order.rs:169`, `:1230`) compare it after `callee`; `step_permuted` and
-`step_renumbered` (`sarif-canon/src/theorems.rs:86`, `:153`) require it equal. It is a plain
-atom, so no new sorting is proved.
+The canonical step keeps its one optional atom for the callee
+(`sarif-canon/src/types.rs:134`, `:186`); only what the parser puts in it changes. `step`
+(`ctadl-query-diff/src/parse.rs:228`) reads `callees` in place of `callee`: it sorts the
+list, drops duplicates, writes it as the text of a JSON array, and interns that. So
+`sarif-canon` is untouched (R14). The set comparison of R10 is the parser's, covered by its
+tests, not by the proofs; the execution notifications are canonicalized the same way.
+`render.rs:99` prints the atom back as an array under `callees`.
 
-The parser makes the atom (`step`, `ctadl-query-diff/src/parse.rs:228`): it sorts the list,
-drops duplicates, writes it as the text of a JSON array, and interns that. The set
-comparison of R10 is therefore the parser's, covered by its tests, not by the proofs; the
-execution notifications are canonicalized the same way. `render.rs:99` prints the atom back
-as an array.
-
-Invariant: `endpoints_result` is not changed. It keeps whole steps, so the endpoint half of
-R10 follows from the step's new field.
+Invariant: the canonical text is a function of the set of names only, so equal sets give
+one atom and unequal sets give two.
 
 ### D4. Tests (R13, R15, R16)
 
