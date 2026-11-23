@@ -1,4 +1,4 @@
-# Intent: give each step of a flow structured properties that `diff-query` compares
+# Intent: compare what a flow's steps and a run's notifications say, in `diff-query`
 
 `ctadl diff-query` compares a `C0001.tainted-path` result's code flow step by step, but it
 reads only each step's `kinds`, its location, and `executionOrder`, which it checks increases
@@ -46,9 +46,30 @@ The step messages are built in `ctadl-ascent/src/query_engine/formatter.rs`: `so
   `ctadl-ascent/tests/integration/diff_query.rs` are updated: a changed step vertex or callee
   is reported; changed step message text is not.
 
+## Also compare `invocation.toolExecutionNotifications`
+
+`diff-query` skips the invocation entirely, so it does not see what a run says about itself.
+`toolExecutionNotifications` is where the query keeps the spec's promises that a vacuous or
+lossy run is visible (`docs/spec.md` F11 and N3), and where `invocation.executionSuccessful`
+comes from: a run is unsuccessful exactly when one of its notifications is at `error` level
+(`build_invocation`, `ctadl-ascent/src/query_engine/formatter.rs:345`). It holds:
+
+- what the query writes: `CTADL0100.endpoint-match-summary` (ports declared and unmatched,
+  sources and sinks matched, as `properties`), `CTADL0101.path-generation-disabled`,
+  `CTADL0102.no-paths-found` and `CTADL0103.path-dropped-no-location`, the last counting paths
+  the formatter found but could not locate (`PathStats`);
+- what the index recorded and the query passes on (`QueryDiagnostics::index_notifications`):
+  `CTADL0104`–`CTADL0111`, such as unresolved indirect calls and calls to functions with no
+  body or model, each with counts in `properties`.
+
+A formatter change that drops paths, or loses a notification, changes nothing `diff-query`
+reads. Compare these notifications as a multiset, each by its descriptor id, level,
+`message.id`, `properties` and locations. As for results, message text is not compared.
+
 ## Not in scope
 
 - Comparing message text.
-- The other fields `diff-query` does not read: `sourceCallee`/`sinkCallee` on results, the
-  invocation's notifications, `ruleConfigurationOverrides`, `executionSuccessful` and
+- The other fields `diff-query` does not read: `sourceCallee`/`sinkCallee` on results (each
+  is the first of `sourceFunctions`/`sinkFunctions`, which are compared),
+  `toolConfigurationNotifications`, `ruleConfigurationOverrides`, `executionSuccessful` and
   `exitCode`.
