@@ -181,9 +181,12 @@ it: when a summarized crossing's first `call-arg` step is dropped, the call is n
 ### D2. The site's callees (R6, R7, R9, R10)
 
 `call_callee` (`formatter.rs:2571`) becomes a map from a site to its callees, sorted by name
-and then deduplicated by name. Names come from `facts.id_to_name`; a function with no name
-takes the `func#<id>` text the message already uses. The map holds one entry per row of
-`facts.call`, which is what the vector it is built from holds.
+and then deduplicated by name. The name is the one that is written: `source_data.id_to_name`,
+which starts as `facts.id_to_name` (`formatter.rs:2762`) and which source info overwrites for
+the functions it knows (`formatter.rs:2274`). So the map is built once those names are read
+(`formatter.rs:2765`); nothing uses it earlier. A function with no name takes the
+`func#<id>` text the message already uses. The map holds one entry per row of `facts.call`,
+which is what the vector it is built from holds.
 
 `sourceCallee` and `sinkCallee` are no longer written (`formatter.rs:3233`, `:3240`). The
 test that reads `sinkCallee` (`ctadl-ascent/tests/integration/cli.rs:297`) reads
