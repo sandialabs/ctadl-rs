@@ -47,14 +47,16 @@ change, and is not specified here.
   `call-arg(<id>, <formal>)` vertex is not compared; the formal and the path are.
 - R4. **Execution notifications.** The `toolExecutionNotifications` of every invocation of
   every run in a file are compared as one multiset. A notification is compared by everything
-  it holds except `message.text`. Their order does not matter; equal notifications count
+  it holds except `message.text` and `message.arguments`, the values the text is rendered
+  from; `message.id` is compared. Their order does not matter; equal notifications count
   separately.
 - R5. **Status.** The status of every invocation of every run in a file is compared as one
   multiset. An absent `exitCode` compares equal only to an absent one.
 - R6. **Flags.** `--endpoints-only` does not change how notifications or statuses are
   compared. `--limit` bounds the rows printed per side for each of results, notifications and
   statuses.
-- R7. **Still not compared.** Message text anywhere, `toolConfigurationNotifications`, and
+- R7. **Still not compared.** Message text anywhere, a notification's `message.arguments`,
+  `toolConfigurationNotifications`, and
   the rest of the invocation (`commandLine`, `arguments`, times, `exitCodeDescription`,
   `ruleConfigurationOverrides`) are not compared.
 - R8. **Malformed input.** A step `taintVertex` or `callee` that is not a string is an error
@@ -115,7 +117,7 @@ one.
 ### D2. Notifications and statuses (R4–R7)
 
 These do not go through `sarif-canon`. Each notification becomes one string: its JSON with
-`message.text` removed and object keys sorted, arrays in the order written. Each invocation's
+`message.text` and `message.arguments` removed and object keys sorted, arrays in the order written. Each invocation's
 status becomes one string, `{"executionSuccessful":…,"exitCode":…}`. For each file the parser
 returns the two lists, pooled over runs and invocations and sorted by string. The driver
 (`ctadl-query-diff/src/driver.rs:73`) runs `multiset_diff` on each pair with string order, so
@@ -152,10 +154,4 @@ ignored; it changes to match R4, R5 and R7. `step_key`
 
 ## Concerns
 
-- C1. **`message.arguments` of a notification.** R4 leaves out only `message.text`, so
-  `message.id` and `message.arguments` are compared. Arguments are the values the text is
-  rendered from. Some index notifications put an example in them, such as one vertex of the
-  first unresolved indirect call in a function (`ctadl-ascent/src/cli/mod.rs:306`), which may
-  depend on iteration order or hold a per-index id. Options: (a) compare arguments, and fix
-  any that turn out unstable; (b) treat arguments as message text and leave them out, keeping
-  `message.id` and `properties`. The spec assumes (a).
+None open.
