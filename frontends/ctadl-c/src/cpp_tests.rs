@@ -682,8 +682,8 @@ fn cpp_this_arrow_resolves_to_member() {
 #[test_log::test]
 fn cpp_pointer_receiver_dispatches_to_method() {
     // FR-3: `p->set(args)` / `p->get()` (where `Box* p = &b`) dispatch as DIRECT calls to
-    // `Box::set`/`Box::get` with the pointer `p` as the arg-0 receiver — by-ref param 0 carries
-    // the member write back to `p`, and `p->get()` reads it out.
+    // `Box::set`/`Box::get` on `*p` (spec 050): `&b` makes `b` a cell, so `*p` is `b`'s storage
+    // `b.deref`, copied in as the arg-0 receiver and written back after the call.
     let src = r#"
         extern "C" int source();
         extern "C" void sink(int);
@@ -702,8 +702,8 @@ fn cpp_pointer_receiver_dispatches_to_method() {
     "#;
     let prog = program_from_cpp_string(src).0;
     check_has_direct_call(&prog, "main", "Box::set");
-    check_direct_call_arg0(&prog, "main", "Box::set", "p");
-    check_direct_call(&prog, "main", "Box::get", ["p"]);
+    check_receiver_location(&prog, "main", "Box::set", "b.deref");
+    check_receiver_location(&prog, "main", "Box::get", "b.deref");
 }
 
 #[test_log::test]
@@ -1630,7 +1630,7 @@ fn cpp_base_less_class_dispatch_unchanged() {
 fn cpp_virtual_call_through_base_pointer_is_multi_target() {
     // FR-2: `virtual int get()` overridden in `Derived`, called through `Base* p = &d`. The
     // edge lists BOTH overrides in the subtree (`Base::get`, `Derived::get`) — CHA, a sound
-    // superset of the single dynamic target — with the pointer receiver `p` as arg 0. Static
+    // superset of the single dynamic target — with `*p`, `d`'s storage, as arg 0. Static
     // dispatch would name only `Base::get` (unsound, since `p` points at a `Derived`).
     let src = r#"
         int source();
@@ -1668,9 +1668,9 @@ fn cpp_virtual_call_through_base_pointer_is_multi_target() {
         edges.iter().any(|e| e == "Base::get") && edges.iter().any(|e| e == "Derived::get"),
         "virtual get() must dispatch to BOTH Base::get and Derived::get (CHA); got {edges:?}\n{prog}"
     );
-    // The pointer receiver `p` is the arg-0 by-ref receiver of the virtual call.
-    check_direct_call_arg0(&prog, "main", "Base::get", "p");
-    check_direct_call_arg0(&prog, "main", "Derived::get", "p");
+    // `*p` -- `d`'s storage, `&d` making `d` a cell -- is the arg-0 receiver (spec 050).
+    check_receiver_location(&prog, "main", "Base::get", "d.deref");
+    check_receiver_location(&prog, "main", "Derived::get", "d.deref");
 }
 
 #[test_log::test]
@@ -2080,19 +2080,20 @@ fn cpp_delete_virtual_destructor_is_multi_target_cha() {
         edges.iter().any(|e| e == "Base::~Base") && edges.iter().any(|e| e == "Derived::~Derived"),
         "virtual delete must dispatch to BOTH Base::~Base and Derived::~Derived (CHA); got {edges:?}\n{prog}"
     );
-    // The delete's arg-0 receiver is the same heap object the setter wrote (the alias of `p`).
-    let set_arg0 = calls
-        .iter()
-        .find(|(e, _)| e.iter().any(|c| c == "Base::set"))
-        .and_then(|(_, a)| a.first())
+    // The delete's receiver is the same heap object the setter wrote: `*p`, the object `new`
+    // put at its address's `deref` (spec 050).
+    let set_arg0 = receiver_locations(&prog, "main", "Base::set")
+        .first()
         .cloned();
-    let del_arg0 = calls
-        .iter()
-        .find(|(e, _)| e.iter().any(|c| c == "Base::~Base"))
-        .and_then(|(_, a)| a.first())
+    let del_arg0 = receiver_locations(&prog, "main", "Base::~Base")
+        .first()
         .cloned();
     assert!(
-        set_arg0.is_some() && set_arg0 == del_arg0,
+        set_arg0.is_some()
+            && set_arg0 == del_arg0
+            && set_arg0
+                .as_ref()
+                .is_some_and(|l| l.segments.last() == Some(&ctadl_ir::PathSegment::Deref)),
         "delete's receiver must be the same heap object as the setter's; \
          set={set_arg0:?} del={del_arg0:?}\n{prog}"
     );
@@ -3039,16 +3040,15 @@ fn cpp_reference_class_parameter_is_a_receiver() {
 
 #[test_log::test]
 fn cpp_pointer_class_parameter_is_a_receiver() {
-    // FR-1: a `Box*` parameter dispatches through `p->get()`. The receiver is the *pointer*
-    // identifier itself (spec 014's convention: the pointer stands for the object it aliases),
-    // so `param_head`'s descent to the leaf identifier is what keys it -- `*p` would never
-    // match the receiver name.
+    // FR-1: a `Box*` parameter dispatches through `p->get()`. The receiver is the object the
+    // parameter points at, `@p0.deref` (spec 050); `param_head`'s descent to the leaf identifier
+    // is what keys the parameter's class.
     let src = r#"
         extern "C" void sink(int);
         struct Box { int v; int get() { return v; } };
         void take(Box* p) { sink(p->get()); }"#;
     let prog = program_from_cpp_string(src).0;
-    check_direct_call(&prog, "take", "Box::get", ["@p0"]);
+    check_receiver_location(&prog, "take", "Box::get", "@p0.deref");
 }
 
 #[test_log::test]
@@ -4025,7 +4025,8 @@ fn cpp_copy_ctor_still_wins_over_a_same_arity_sibling() {
             return 0;
         }";
     let prog = program_from_cpp_string(src).0;
-    check_direct_call(&prog, "main", "Box::Box#1(int)", ["a", "#1"]);
+    // `Box c(&a)` makes `a` a cell, so `a` is constructed at its storage `a.deref` (spec 050).
+    check_receiver_location(&prog, "main", "Box::Box#1(int)", "a.deref");
     check_direct_call_arg0(&prog, "main", "Box::Box#copy", "b");
     check_direct_call_arg0(&prog, "main", "Box::Box#1(Box*)", "c");
     // The copy constructor keeps its own parameters and its own body, and is keyed apart from
@@ -5550,4 +5551,102 @@ fn cpp_weak_copy_back_into_several_locations() {
             "no weak copy into {x}: {lines:#?}"
         );
     }
+}
+
+// ---- Spec 050: pointers follow main's `*p` model -----------------------------------------------
+
+#[test_log::test]
+fn cpp_new_constructs_the_object_at_its_address_deref() {
+    // FR-2: `new B(x)` yields an address `O`; the object is `O.deref`, constructed there, so
+    // `p->v` (`O.deref.v`) reads what the constructor wrote.
+    let src = r"
+        struct B { int v; B(int x) : v(x) {} };
+        int main() { B* p = new B(7); return p->v; }";
+    let prog = program_from_cpp_string(src).0;
+    let ctor = receiver_locations(&prog, "main", "B::B");
+    assert_eq!(ctor.len(), 1, "{prog}");
+    let object = &ctor[0];
+    assert_eq!(
+        object.segments.as_slice(),
+        [ctadl_ir::PathSegment::Deref],
+        "the object is the memory at `new`'s address\n{prog}"
+    );
+    let main = render_function(&prog, "main");
+    assert!(
+        main.contains(&format!("= {object}.v")),
+        "`p->v` reads the constructed object's member\n{main}"
+    );
+}
+
+#[test_log::test]
+fn cpp_receiver_write_back_names_each_member() {
+    // FR-3: a receiver named by a path (here `a`'s cell, `&a` being taken) is stored back whole
+    // and then member by member -- a member object's members included -- so each composed path
+    // is spelled in the program and admissible.
+    let src = r"
+        struct In { int x; };
+        struct B { int v; In in; void set(int y) { v = y; } };
+        int main() { B a; B* p = &a; a.set(1); return p != 0; }";
+    let prog = program_from_cpp_string(src).0;
+    check_receiver_location(&prog, "main", "B::set", "a.deref");
+    for dst in ["a.deref", "a.deref.v", "a.deref.in", "a.deref.in.x"] {
+        assert!(
+            count_writes_in(&prog, "main", dst) >= 1,
+            "no write-back store to `{dst}`\n{prog}"
+        );
+    }
+}
+
+#[test_log::test]
+fn cpp_this_as_a_pointer_argument_is_a_cell_copied_back() {
+    // FR-4: `helper(this)` passes a fresh cell holding a member-wise copy of the receiver, and
+    // copies each member back into the receiver, weakly, after the call.
+    let src = r"
+        struct B; void helper(B* p);
+        struct B { int v; void run() { helper(this); } };
+        void helper(B* p) { p->v = 1; }";
+    let prog = program_from_cpp_string(src).0;
+    let calls = direct_calls_in(&prog, "B::run");
+    let (_, args) = calls
+        .iter()
+        .find(|(callees, _)| callees.iter().any(|c| c == "helper"))
+        .unwrap_or_else(|| panic!("no call to helper\n{prog}"));
+    let cell = args[0].access_path().cloned().expect("a variable");
+    assert!(
+        cell.is_pathless(),
+        "`this` is passed as a cell variable\n{prog}"
+    );
+    let run = render_function(&prog, "B::run");
+    assert!(
+        run.contains(&format!("store {cell}.deref.v := @p0.v")),
+        "the cell holds a member-wise copy of the receiver\n{run}"
+    );
+    assert!(
+        run.lines()
+            .any(|l| l.trim().starts_with("store @p0.v := ") && l.contains("@p0.v")),
+        "the member is copied back weakly (`@p0.v := @p0.v, ..`)\n{run}"
+    );
+}
+
+#[test_log::test]
+fn cpp_pointer_copied_from_this_aliases_the_receiver() {
+    // FR-4: `B* q = this` binds `q` to the receiver in the same-block alias table, so `q->v` is
+    // the receiver's own `@p0.v`.
+    let src = r"
+        struct B { int v; void run(int x) { B* q = this; q->v = x; } };";
+    let prog = program_from_cpp_string(src).0;
+    check_func_assign_or_update(&prog, "B::run", "@p0.v", ["@p1"]);
+}
+
+#[test_log::test]
+fn cpp_mvp_declared_object_whose_address_is_taken_is_a_cell() {
+    // FR-2: `B a(x)` is the most vexing parse of a construction. It declares an object, so `&a`
+    // makes `a` a cell (`declares_object`), constructed at `a.deref` and passed by address.
+    let src = r"
+        struct B { int v; B(int x) : v(x) {} };
+        int take(B* p) { return p->v; }
+        int main() { B a(7); return take(&a); }";
+    let prog = program_from_cpp_string(src).0;
+    check_receiver_location(&prog, "main", "B::B", "a.deref");
+    check_direct_call(&prog, "main", "take", ["a"]);
 }

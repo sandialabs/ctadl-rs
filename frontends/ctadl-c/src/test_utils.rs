@@ -907,6 +907,48 @@ pub(crate) fn check_func_params(prog: &Program, name: &str, expected: &[Paramete
     );
 }
 
+/* The location each direct call to `callee` in `caller` takes its receiver from: arg 0 itself, or,
+when arg 0 is a temp copied from a location (`assign <t> = b.deref`, the copy-in of a receiver
+named by a path, spec 050), that location. In call order. */
+pub(crate) fn receiver_locations(prog: &Program, caller: &str, callee: &str) -> Vec<AccessPath> {
+    let fun = function_named(prog, caller)
+        .unwrap_or_else(|| panic!("no function named {caller:?}\n{prog}"));
+    let copied_from = |temp: &AccessPath| {
+        fun.blocks
+            .iter()
+            .flat_map(|b| b.statements.iter())
+            .find_map(|s| match &s.kind {
+                StatementKind::Assign { dest, sources }
+                    if dest == temp && temp.is_pathless() && sources.len() == 1 =>
+                {
+                    sources[0].access_path().cloned()
+                }
+                _ => None,
+            })
+    };
+    direct_calls_in(prog, caller)
+        .into_iter()
+        .filter(|(callees, _)| callees.iter().any(|c| c == callee))
+        .filter_map(|(_, args)| args.first().and_then(|a| a.access_path().cloned()))
+        .map(|arg0| copied_from(&arg0).unwrap_or(arg0))
+        .collect()
+}
+
+/* Asserts every direct call to `callee` in `caller` takes its receiver from the location `loc`
+(DSL), as [`receiver_locations`] reads it, and that there is at least one. */
+#[track_caller]
+pub(crate) fn check_receiver_location(prog: &Program, caller: &str, callee: &str, loc: &str) {
+    let fun = function_named(prog, caller)
+        .unwrap_or_else(|| panic!("no function named {caller:?}\n{prog}"));
+    let want = access_path_from_str(loc, &fun.locals, &prog.globals);
+    let found = receiver_locations(prog, caller, callee);
+    assert!(
+        !found.is_empty() && found.iter().all(|l| *l == want),
+        "expected every call to {callee:?} in {caller:?} to take its receiver from `{loc}`; \
+         found {found:?}\n{prog}"
+    );
+}
+
 /* Asserts function `caller` contains a direct call to `callee` whose *first* argument is the access
 path `arg0` (DSL), without constraining the remaining arguments. Use this to pin the receiver of a
 lowered method call (`recv.m(args)` → `Class::m(recv, …)`) without pinning the incidental flatten

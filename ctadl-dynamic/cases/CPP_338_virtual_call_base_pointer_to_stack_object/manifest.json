@@ -1,0 +1,6 @@
+{
+  "name": "CPP_338_virtual_call_base_pointer_to_stack_object",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `D d; Base* b = &d; b->set(source()); sink(d.v)`, `set` virtual. CHA dispatch on `*b`, d's storage. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

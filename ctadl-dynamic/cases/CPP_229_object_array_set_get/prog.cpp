@@ -1,4 +1,4 @@
-/* C++ arrays of objects (spec 038), POSITIVE (`a4_array_method_get`). Both calls dispatch on `arr[1]`, but the taint sits at a path only the callees spell: F4 (OPEN, known gap). s=none d=flow. */
+/* C++ arrays of objects (spec 038), POSITIVE (`a4_array_method_get`), formerly F4. Both calls dispatch on `arr[1]`; since spec 050 the receiver's write-back stores each member by name, which spells the element's member path. s=flow d=flow agree. */
 extern "C" int source();
 extern "C" void sink(int);
 

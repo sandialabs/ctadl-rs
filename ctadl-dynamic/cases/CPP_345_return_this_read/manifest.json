@@ -1,0 +1,6 @@
+{
+  "name": "CPP_345_return_this_read",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `B* self() { return this; }`; `b.v = source(); B* q = b.self(); sink(q->v)`. The returned cell holds a copy of the receiver. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

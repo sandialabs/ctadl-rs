@@ -1,0 +1,6 @@
+{
+  "name": "CPP_340_this_as_pointer_argument_write",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `void run() { helper(this); }`, `helper(B* p) { p->v = source(); }`; `b.run(); sink(b.v)`. `this` is a cell holding a copy of the receiver, copied back after the call. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

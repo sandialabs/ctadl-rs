@@ -1,7 +1,6 @@
 {
   "name": "CPP_161_member_receiver_set_get",
-  "description": "C++ member-object receivers x F4 (open): o.in.set(source()); sink(o.in.get()). Dispatch is right, but `.in.v` is never an admissible path (C case 38). Allowlisted as known_gap F4.",
+  "description": "C++ member-object receivers (spec 030), POSITIVE: o.in.set(source()); sink(o.in.get()). The receiver's write-back now stores each member by name (spec 050), which spells `.in.v`, so the path F4 left inadmissible is admitted. F4 arm resolved. s=flow d=flow agree.",
   "label": "Test",
-  "expect_flow": true,
-  "known_gap": "F4"
+  "expect_flow": true
 }

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_335_pointer_method_write_arrow_read",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `p->set(source()); sink(p->v)` with `B* p = &b`. The method's write and the `->` read both name `b.deref.v`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

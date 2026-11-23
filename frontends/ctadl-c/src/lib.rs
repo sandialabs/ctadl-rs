@@ -755,6 +755,7 @@ fn addr_taken_locals(
     body: Node<'_>,
     source: &str,
     type_names: &HashSet<String>,
+    declares_object: &dyn Fn(Node<'_>, Node<'_>) -> bool,
 ) -> HashSet<String> {
     fn taken<'s>(
         node: Node<'_>,
@@ -799,11 +800,13 @@ fn addr_taken_locals(
     // Every declaration of every name in `names`: may it live in a cell? A local array or a
     // function may not; anything else may, an array parameter included (it decays to a
     // pointer). Keyed by name, so one local-array declaration anywhere in the function
-    // excludes it.
+    // excludes it. A declarator shaped like a function that declares an object instead (C++'s
+    // `B b(x)`, [`GrammarHooks::declares_object`]) may.
     fn declared<'s>(
         node: Node<'_>,
         source: &'s str,
         names: &HashSet<&'s str>,
+        declares_object: &dyn Fn(Node<'_>, Node<'_>) -> bool,
         out: &mut HashMap<&'s str, bool>,
     ) {
         if matches!(node.kind(), "declaration" | "parameter_declaration") {
@@ -815,7 +818,9 @@ fn addr_taken_locals(
                 {
                     let cell = match nearest {
                         "array_declarator" => node.kind() == "parameter_declaration",
-                        "function_declarator" => false,
+                        "function_declarator" => {
+                            node.kind() == "declaration" && declares_object(node, declarator)
+                        }
                         _ => true,
                     };
                     *out.entry(name).or_insert(true) &= cell;
@@ -825,7 +830,7 @@ fn addr_taken_locals(
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() != "function_definition" {
-                declared(child, source, names, out);
+                declared(child, source, names, declares_object, out);
             }
         }
     }
@@ -835,8 +840,8 @@ fn addr_taken_locals(
         return HashSet::new();
     }
     let mut cell = HashMap::new();
-    declared(params, source, &names, &mut cell);
-    declared(body, source, &names, &mut cell);
+    declared(params, source, &names, declares_object, &mut cell);
+    declared(body, source, &names, declares_object, &mut cell);
     cell.into_iter()
         .filter(|(_, c)| *c)
         .map(|(n, _)| n.to_string())
@@ -1082,6 +1087,12 @@ struct GrammarHooks {
     /// `collect_aux` registers and lowers under their qualified names, and none of which the
     /// shared pass could name.
     aux_owns_definition: for<'t> fn(Node<'t>) -> bool,
+    /// Whether a block-scope `declaration` whose `declarator` is shaped like a function declares
+    /// an object instead. C: never, it is a prototype. C++: `B b(x)` -- the most vexing parse of a
+    /// constructor call, which tree-sitter reads as a function declarator -- declares the object
+    /// `b` when `B` is a known class, so `&b` makes `b` a cell like any address-taken local
+    /// ([`addr_taken_locals`], spec 050).
+    declares_object: for<'t> fn(&Context<'_>, Node<'t>, Node<'t>, &str) -> bool,
     /// Discover and lower any *auxiliary* function definitions that the top-level
     /// `function_definition` query in [`Context::lower_definitions`] does not reach. C has
     /// none, so its hook is a no-op. C++ uses it to discover inline instance methods (which
@@ -1302,6 +1313,8 @@ impl GrammarHooks {
         collect_overloads: |_source, _root, _overloads| Ok(()),
         // C has no definitions the shared pass cannot own: no methods, no namespaces.
         aux_owns_definition: |_def| false,
+        // C has no constructors: a function-shaped block-scope declarator is a prototype.
+        declares_object: |_ctx, _declaration, _declarator, _source| false,
         // C has no `delete_expression` (nor destructors), so this is never invoked on the C path;
         // the no-op keeps `delete` a taint no-op exactly as spec 014 left it.
         delete_expr: |_ctx, _program, _node, _source, _scope_view| Ok(()),
@@ -3548,6 +3561,17 @@ impl<'a> Context<'a> {
         if target_node.kind() != "pointer_expression" && target_ap.is_pathless() {
             let is_plain_assign = operator_node.is_none_or(|op| op.kind() == "=");
             let addr_of_pointee = if is_plain_assign
+                && expr_node.kind() == "this"
+                && self.current_method_class.is_some()
+            {
+                // C++ `q = this`: `q` points at the receiver object itself (spec 050).
+                Some(self.build_access_path(
+                    "this",
+                    Default::default(),
+                    scope_view,
+                    &mut program[scope_view.fidx].locals,
+                ))
+            } else if is_plain_assign
                 && expr_node.kind() == "pointer_expression"
                 && expr_node
                     .child_by_field_name("operator")
@@ -5883,20 +5907,11 @@ impl<'a> Context<'a> {
                     ),
                 }
             }
-            // The C++ `this` receiver — inside a method body, `this` is the implicit param 0
-            // installed by `lower_function`, so it resolves to `@p0`. `*this` reaches here via
-            // the `pointer_expression` arm below (its argument is this node). A `this` node
-            // never occurs under the C grammar, so this arm is inert for C.
-            "this" => {
-                let ap = self.build_access_path(
-                    "this",
-                    Default::default(),
-                    scope_view,
-                    &mut program[scope_view.fidx].locals,
-                );
-                // `this` is parameter 0, a bare variable, so this emits no loads.
-                Ok(Exp::path(self.emit_loads(program, scope_view, ap)))
-            }
+            // The C++ `this` as a value: a pointer to the receiver object (spec 050). Inside a
+            // method the object is the implicit param 0 installed by `lower_function`, `@p0`,
+            // and `this->m`, `*this` and `this` as a receiver resolve to it without coming here.
+            // A `this` node never occurs under the C grammar, so this arm is inert for C.
+            "this" => self.this_pointer(program, node, scope_view),
             // A C++ qualified name used as a value or callee (`ns::f`, `ns::Box::m`). Its
             // source text is the fully-qualified string (`ns::f`), which resolves to a global
             // by that name — so a qualified call `ns::f(args)` (whose `function` child is this
@@ -6830,11 +6845,12 @@ impl<'a> Context<'a> {
                     .expect("parenthesized_expression has an inner node");
                 self.resolve_recv_obj(program, inner, source, scope_view)
             }
+            // `(*p).m()`: the object `p` points at (spec 050).
             "pointer_expression" => {
                 let arg = recv_node
                     .child_by_field_name("argument")
                     .expect("pointer_expression always has an argument");
-                self.resolve_recv_obj(program, arg, source, scope_view)
+                self.resolve_pointee_obj(program, arg, source, scope_view)
             }
             // A chained receiver: lower the inner call; only a receiver-returning method
             // (`return *this`) yields an object to chain on.
@@ -6898,6 +6914,172 @@ impl<'a> Context<'a> {
             }
             _ => Ok(None),
         }
+    }
+
+    /// The object the C++ pointer `pointer` points at, as a receiver: `p->m()`, `(*p).m()` and
+    /// `delete p` all act on `*p` (spec 050). `*p` is the location [`Self::deref_location`] gives
+    /// the expression `*p` -- `p.deref`, or the storage of `x` after a same-block `p = &x` -- so a
+    /// method call through a pointer reaches the members `p->f` names. Like any receiver named by
+    /// a path, it is passed as the value loaded from that location and written back after the
+    /// call ([`RecvObj::write_back`]).
+    ///
+    /// `this` is the receiver object itself (`this->m()` is `m()`). A class that declares
+    /// `operator->` or `operator*` is a smart pointer, whose `w->m()` is unmodelled and keeps the
+    /// old lowering, as does every pointer whose class the frontend cannot see (a call's result,
+    /// a template parameter). `None` when `pointer` is not a class object or pointer -- every C
+    /// pointer, since `classes` is empty there.
+    fn resolve_pointee_obj(
+        &mut self,
+        program: &mut Program,
+        pointer: Node<'_>,
+        source: &'a str,
+        scope_view: &mut ScopeView,
+    ) -> Result<Option<RecvObj>, Error> {
+        let inner = unparenthesized_callee(pointer);
+        let class = match inner.kind() {
+            "this" => None,
+            _ => self.object_class_of(inner, source, scope_view),
+        };
+        let Some(class) = class.filter(|class| {
+            self.resolve_method_class(class, "operator->").is_none()
+                && self.resolve_method_class(class, "operator*").is_none()
+        }) else {
+            return self.resolve_recv_obj(program, inner, source, scope_view);
+        };
+        let location = self.deref_location(program, inner, source, scope_view)?;
+        let exp = Exp::path(self.emit_loads(program, scope_view, location.clone()));
+        let write_back = (!location.is_pathless()).then_some(location);
+        Ok(Some(RecvObj {
+            exp,
+            class,
+            write_back,
+        }))
+    }
+
+    /// The value of C++ `this`: a pointer to the receiver object (spec 050). A pointer is an
+    /// address whose `deref` is the object, and the receiver object (`@p0`, members at `@p0.m`)
+    /// has no address the IR can name, so `this` is a fresh cell `c` holding a copy of the object,
+    /// `c.deref := @p0` member by member ([`Self::write_back_object`]). `p->m` in a callee is then
+    /// `p.deref.m`, which reads the copy. When `this` is a call's argument (`helper(this)`) the
+    /// callee's writes through it are copied back into the object after the call, weakly, member
+    /// by member. `return this` and `q = this` take the copy alone; a same-block `q->m` resolves
+    /// to the object itself through [`Self::addr_alias`].
+    fn this_pointer(
+        &mut self,
+        program: &mut Program,
+        node: Node<'_>,
+        scope_view: &ScopeView,
+    ) -> Result<Exp, Error> {
+        let object = self.build_access_path(
+            "this",
+            Default::default(),
+            scope_view,
+            &mut program[scope_view.fidx].locals,
+        );
+        let Some(class) = self.current_method_class.clone() else {
+            return Ok(Exp::path(self.emit_loads(program, scope_view, object)));
+        };
+        let temp = self.allocator.next_temp();
+        let cell_var =
+            VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
+        let cell = AccessPath::new(cell_var.clone(), [PathSegment::Deref]);
+        let value = Exp::path(self.emit_loads(program, scope_view, object.clone()));
+        self.write_back_object(program, scope_view, &cell, &value, &class);
+        let mut parent = node.parent();
+        while let Some(p) = parent.filter(|p| p.kind() == "parenthesized_expression") {
+            parent = p.parent();
+        }
+        if parent.is_some_and(|p| p.kind() == "argument_list") {
+            for member in self.member_paths(&class) {
+                let segments = || member.iter().map(|m| PathSegment::field(m.as_str()));
+                let mut dst = object.clone();
+                dst.extend(segments());
+                let mut src = cell.clone();
+                src.extend(segments());
+                self.reference_copies_out.push((dst, src, true));
+            }
+        }
+        Ok(Exp::variable(cell_var))
+    }
+
+    /// Store the copy `value` of a receiver named by a path back into its `location` after a
+    /// call ([`RecvObj::write_back`]): the whole object, then each data member of `class` by name.
+    /// The index admits a path only when the program or a summary spells it, so without the
+    /// member stores `x.deref.v`, the callee's `.v` composed onto the receiver's `x.deref`, would
+    /// be inadmissible and a write the callee made through `this` would be dropped (spec 050).
+    fn write_back_object(
+        &mut self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        location: &AccessPath,
+        value: &Exp,
+        class: &str,
+    ) {
+        self.add_assign_to_program(program, scope_view, location, value, None);
+        let Exp::Path(value) = value else {
+            return;
+        };
+        for member in self.member_paths(class) {
+            let segments = || member.iter().map(|m| PathSegment::field(m.as_str()));
+            let mut dst = location.clone();
+            dst.extend(segments());
+            let mut src = value.clone();
+            src.extend(segments());
+            self.add_assign_to_program(program, scope_view, &dst, &Exp::Path(src), None);
+        }
+    }
+
+    /// The data-member paths of an object of `class`, in name order, its bases' members
+    /// included and each member object's own members after it: `[in]`, `[in, x]`, `[v]`.
+    /// `static` members are globals, not part of the object. Empty for C, which has no classes.
+    fn member_paths(&self, class: &str) -> Vec<Vec<String>> {
+        fn walk(
+            ctx: &Context<'_>,
+            class: &str,
+            prefix: &mut Vec<String>,
+            seen: &mut HashSet<String>,
+            out: &mut Vec<Vec<String>>,
+        ) {
+            if prefix.len() > 8 || !seen.insert(class.to_string()) {
+                return;
+            }
+            let Some(info) = ctx.classes.get(class) else {
+                seen.remove(class);
+                return;
+            };
+            let mut members: Vec<&String> = info
+                .members
+                .iter()
+                .filter(|m| !info.static_members.contains(*m))
+                .collect();
+            members.sort();
+            for member in members {
+                prefix.push(member.clone());
+                out.push(prefix.clone());
+                let object = info.member_objects.iter().find(|(m, _)| m == member);
+                if let Some(object_class) = object.and_then(|(_, c)| ctx.class_named_in(class, c)) {
+                    walk(ctx, &object_class, prefix, seen, out);
+                }
+                prefix.pop();
+            }
+            for base in &info.bases {
+                if let Some(base) = ctx.class_named_in(class, base) {
+                    walk(ctx, &base, prefix, seen, out);
+                }
+            }
+            seen.remove(class);
+        }
+        let mut out = Vec::new();
+        walk(
+            self,
+            class,
+            &mut Vec::new(),
+            &mut HashSet::default(),
+            &mut out,
+        );
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// A C++ member object as a method receiver (spec 030): an unqualified member `in` inside a
@@ -7703,8 +7885,16 @@ impl<'a> Context<'a> {
                 let field_node = func_node
                     .child_by_field_name("field")
                     .expect("field_expression always has a field");
-                let Some(recv) = self.resolve_recv_obj(program, recv_node, source, scope_view)?
-                else {
+                // `p->m()` is `(*p).m()`: it dispatches on the object `p` points at (spec 050).
+                let arrow = func_node
+                    .child_by_field_name("operator")
+                    .is_some_and(|op| to_str(&op, source) == "->");
+                let recv = if arrow {
+                    self.resolve_pointee_obj(program, recv_node, source, scope_view)?
+                } else {
+                    self.resolve_recv_obj(program, recv_node, source, scope_view)?
+                };
+                let Some(recv) = recv else {
                     // A receiver whose type is a template parameter (spec 043).
                     return self.dependent_call(
                         program,
@@ -7873,7 +8063,7 @@ impl<'a> Context<'a> {
             },
         ));
         if let Some(location) = &recv.write_back {
-            self.add_assign_to_program(program, scope_view, location, &recv.exp, None);
+            self.write_back_object(program, scope_view, location, &recv.exp, &recv.class);
         }
         self.emit_post_call_copies(program, scope_view);
 
@@ -8597,7 +8787,15 @@ impl<'a> Context<'a> {
         self.label_blocks.clear();
         self.walked_label_blocks.clear();
         // Address-taken scalars live in memory; copy each such parameter into its cell.
-        self.cells = addr_taken_locals(param_list, body_node, source, &self.type_names);
+        let declares_object = self.hooks.declares_object;
+        let cells = addr_taken_locals(
+            param_list,
+            body_node,
+            source,
+            &self.type_names,
+            &|declaration, declarator| declares_object(self, declaration, declarator, source),
+        );
+        self.cells = cells;
         // A reference-cell parameter already lives in memory, at `@pN.deref`.
         let reference_cells = &self.reference_cells;
         self.cells.retain(|name| !reference_cells.contains(name));

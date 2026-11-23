@@ -1,0 +1,6 @@
+{
+  "name": "CPP_337_deref_dot_method_call",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `(*p).set(source()); sink(b.v)` with `B* p = &b`. `(*p).m()` dispatches on `*p` as `p->m()` does. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

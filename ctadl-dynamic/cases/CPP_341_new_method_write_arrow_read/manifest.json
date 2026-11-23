@@ -1,0 +1,6 @@
+{
+  "name": "CPP_341_new_method_write_arrow_read",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `B* p = new B(); p->set(source()); sink(p->v)`. `new` yields an address `O` whose object is `O.deref`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

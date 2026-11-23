@@ -1,0 +1,6 @@
+{
+  "name": "CPP_339_pointer_to_array_element_method",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `B arr[2]; B* p = &arr[1]; p->set(source()); sink(arr[1].v)`. `*p` is `arr.[1].deref`, the element `arr[1]` names; this was s=none before the merge too. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

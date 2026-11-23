@@ -1,0 +1,6 @@
+{
+  "name": "CPP_343_this_as_pointer_argument_read",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `int look() { return peek(this); }`, `peek(B* p)` reads `p->v`; `b.v = source(); sink(b.look())`. The copy in `this`'s cell carries the receiver's members. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -511,6 +511,31 @@ fn cpp_discover_overloads(
     Ok(())
 }
 
+/// The C++ `GrammarHooks::declares_object`: a block-scope `declaration` whose `declarator` is
+/// shaped like a function declares an object when it is the most vexing parse of a construction,
+/// `B b(x)` -- its type a known class and its parameter list not empty, as
+/// [`cpp_try_construct`] reads it. `B b()` stays a prototype.
+fn cpp_declares_object(
+    ctx: &Context<'_>,
+    declaration: Node<'_>,
+    declarator: Node<'_>,
+    source: &str,
+) -> bool {
+    let class = declaration
+        .child_by_field_name("type")
+        .map(|t| template_erased_name(t, source))
+        .and_then(|name| ctx.class_named(&name));
+    let has_args = declarator
+        .child_by_field_name("parameters")
+        .is_some_and(|params| {
+            let mut cursor = params.walk();
+            params
+                .children(&mut cursor)
+                .any(|c| c.kind() == "parameter_declaration")
+        });
+    class.is_some() && has_args
+}
+
 /// The C++ `GrammarHooks::aux_owns_definition`: whether a `function_definition` the shared
 /// definition query found is one [`cpp_collect_methods`] / [`cpp_collect_namespaced_functions`]
 /// own, rather than a free function of the unit. A class member — an inline method or
@@ -2703,19 +2728,53 @@ fn emit_ctor_call<'a>(
     arg_shapes: &[ArgShape],
     copy: bool,
 ) -> anyhow::Result<(), Error> {
-    // The object under construction is the by-ref arg 0, so resolve it to its location. A
-    // plain local object is pathless (no load emitted); a global one must be loaded, which is
-    // the only way the offset-only IR can name it.
+    // The object under construction is the by-ref arg 0, so resolve it to its location.
     let recv_ap = ctx.build_access_path(
         obj_name,
         Default::default(),
         scope_view,
         &mut program[scope_view.fidx].locals,
     );
-    let recv = Exp::path(ctx.emit_loads(program, scope_view, recv_ap));
-    emit_ctor_edge(
-        ctx, program, scope_view, source, class, recv, ctor_args, arg_nodes, arg_shapes, copy,
+    emit_ctor_at(
+        ctx, program, scope_view, source, class, recv_ap, ctor_args, arg_nodes, arg_shapes, copy,
     )
+}
+
+/// [`emit_ctor_call`] for an object at the location `recv_ap`. A plain local object is pathless
+/// and is the receiver itself. An object named by a path -- a local whose address is taken,
+/// which lives in its cell at `x.deref`; a global's `$g.deref`; a heap object's `O.deref` -- is
+/// passed as the value loaded from it and stored back after the constructor, as a method
+/// receiver named by a path is (spec 050).
+#[allow(clippy::too_many_arguments)]
+fn emit_ctor_at<'a>(
+    ctx: &mut Context<'a>,
+    program: &mut Program,
+    scope_view: &mut ScopeView,
+    source: &'a str,
+    class: &str,
+    recv_ap: AccessPath,
+    ctor_args: ThinVec<Exp>,
+    arg_nodes: &[Node<'_>],
+    arg_shapes: &[ArgShape],
+    copy: bool,
+) -> anyhow::Result<(), Error> {
+    let recv = Exp::path(ctx.emit_loads(program, scope_view, recv_ap.clone()));
+    emit_ctor_edge(
+        ctx,
+        program,
+        scope_view,
+        source,
+        class,
+        recv.clone(),
+        ctor_args,
+        arg_nodes,
+        arg_shapes,
+        copy,
+    )?;
+    if !recv_ap.is_pathless() {
+        ctx.write_back_object(program, scope_view, &recv_ap, &recv, class);
+    }
+    Ok(())
 }
 
 /// The constructor edge itself: `DirectCall Class::Class…(recv, args…)` with `recv` -- an
@@ -2894,15 +2953,23 @@ fn lower_new_expression<'a>(
         .map(arg_nodes_of)
         .unwrap_or_default();
 
-    // Allocate the synthetic object as a fresh local, recording its (allocated) class so a
-    // direct dispatch on it would resolve; the pointer that aliases it carries the *declared*
-    // static type for CHA (set by the caller).
+    // Allocate the synthetic object's address as a fresh local `O`: the object is the memory
+    // there, `O.deref`, as `*p` is `p.deref` (spec 050). `O` records its (allocated) class as a
+    // pointer to it; the pointer bound to `O` carries the *declared* static type for CHA (set by
+    // the caller).
     let obj = ctx.allocator.next_temp();
     ctx.scope_tree
         .add_variable(scope_view.sidx, obj.clone(), VarKind::Local);
     if ctx.classes.contains_key(alloc_type) {
         ctx.local_types.insert(obj.clone(), alloc_type.to_string());
+        ctx.local_pointers.insert(obj.clone());
     }
+    let address = ctx.build_access_path(
+        &obj,
+        Default::default(),
+        scope_view,
+        &mut program[scope_view.fidx].locals,
+    );
     // Run the constructor iff the allocated type declares one (reuse the ctor edge). A
     // ctor-less allocation (`new Box()` with no user ctor) just yields the fresh object.
     if ctx
@@ -2918,27 +2985,24 @@ fn lower_new_expression<'a>(
             .get(alloc_type)
             .is_some_and(|info| info.has_copy_ctor)
             && matches!(arg_shapes.as_slice(), [ArgShape::Object(c)] if ctx.class_is_a(c, alloc_type));
-        emit_ctor_call(
+        let mut object = address.clone();
+        object.push(PathSegment::Deref);
+        emit_ctor_at(
             ctx,
             program,
             scope_view,
             source,
             alloc_type,
-            &obj,
+            object,
             ctor_args,
             &arg_nodes,
             &arg_shapes,
             copy,
         )?;
     }
-    // Returned as a `AccessPath` (not lowered to loads): the caller binds the pointer local to
-    // this object as an *alias*, so it must keep naming the object's storage.
-    Ok(Some(ctx.build_access_path(
-        &obj,
-        Default::default(),
-        scope_view,
-        &mut program[scope_view.fidx].locals,
-    )))
+    // The address, as an `AccessPath`: the caller binds the pointer local to it as an *alias*,
+    // so `p->f` is `O.deref.f`, the object's storage.
+    Ok(Some(address))
 }
 
 /// Recognize and lower a heap-object declaration `Type* p = new AllocType(args)` — the `new`
@@ -3106,11 +3170,13 @@ fn cpp_lower_delete<'a>(
     };
     // Resolve the operand to the pointed-to object and its static class. A non-class pointer
     // (or an unrecognized operand) yields `None` — nothing to destroy in the taint model.
-    let Some(recv) = ctx.resolve_recv_obj(program, operand, source, scope_view)? else {
+    let Some(recv) = ctx.resolve_pointee_obj(program, operand, source, scope_view)? else {
         return Ok(());
     };
-    let location = match &recv.exp {
-        Exp::Path(ap) => ap.clone(),
+    // `*p`'s own location, so members are destroyed where they live (spec 050).
+    let location = match (&recv.write_back, &recv.exp) {
+        (Some(location), _) => location.clone(),
+        (None, Exp::Path(ap)) => ap.clone(),
         _ => return Ok(()),
     };
     // A non-virtual destructor destroys exactly the static type: its own destructor, members
@@ -4935,6 +5001,8 @@ pub(super) const CPP_HOOKS: GrammarHooks = GrammarHooks {
     // `cpp_collect_namespaced_functions`: class members, namespaced functions, and every
     // definition whose function name is not a plain `identifier` (an out-of-line member).
     aux_owns_definition: cpp_aux_owns_definition,
+    // `B b(x)` under the most vexing parse declares the object `b` (spec 050).
+    declares_object: cpp_declares_object,
     // Lower an overloaded operator as the method it is: `a = x` / `a += x` / `a[i]` / `f(args)`
     // on an object whose class declares that operator becomes a `DirectCall Class::operator…`
     // with the object as the arg-0 receiver. Declines for every operand that is not a known class

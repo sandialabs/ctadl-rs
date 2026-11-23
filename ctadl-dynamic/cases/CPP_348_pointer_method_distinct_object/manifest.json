@@ -1,0 +1,6 @@
+{
+  "name": "CPP_348_pointer_method_distinct_object",
+  "description": "C++ pointers follow the `*p` model (spec 050), NEGATIVE: `B a; B b; B* p = &a; p->set(source()); sink(b.v)`. `*p` is `a`, never `b`. s=none d=none agree.",
+  "label": "Test",
+  "expect_flow": false
+}

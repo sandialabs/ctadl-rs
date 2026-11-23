@@ -1,0 +1,6 @@
+{
+  "name": "CPP_346_mvp_object_passed_by_address",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `take(B* p) { sink(p->v); }`; `B a(source()); take(&a)`. `B a(x)` (the most vexing parse) declares an object, so `&a` makes `a` a cell constructed at `a.deref`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

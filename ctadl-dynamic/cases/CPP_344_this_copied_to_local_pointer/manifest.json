@@ -1,0 +1,6 @@
+{
+  "name": "CPP_344_this_copied_to_local_pointer",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `void run() { B* q = this; q->v = source(); }`; `b.run(); sink(b.v)`. `q = this` binds `q` to the receiver object in `addr_alias`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

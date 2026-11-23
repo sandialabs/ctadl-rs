@@ -14,7 +14,7 @@ frontend ingestion gaps — and tracks their disposition.
 | initializer_list (`{...}`) not ingested | frontend | 31, 34–36 | ✅ resolved (spec 019) |
 | labeled_empty_statement (`L: ;`) not ingested | frontend | 32 | ✅ resolved (spec 018) |
 | F3 — a non-constant subscript reads/writes only element 0 | soundness | 37, CPP_133 | ❌ **open** (IR path model) |
-| F4 — a field path composed across a call is never admissible | soundness | 38, CPP_161, CPP_179, CPP_229 | ❌ **open** (codegen `paths` gate) |
+| F4 — a field path composed across a call is never admissible | soundness | 38, CPP_179 | ❌ **open** (codegen `paths` gate); C++ receiver arms resolved by spec 050 |
 | F5 — `(p + 1)->f` and `arr[1].f` lower to different paths | soundness | 39 | ❌ **open** (C pointer model) |
 | F6 — a `static` local does not persist across calls | soundness | 40 | ❌ **open** (C frontend) |
 | F7 — a pointer stored in a field does not alias its pointee | soundness | 41, CPP_252 | ❌ **open** (C pointer model / engine) |
@@ -148,8 +148,15 @@ field from the manifest **and** mark the entry below RESOLVED.
 
 ## F4 — A field path composed across a call is never admissible (OPEN)
 
-- **Status:** **open**, allowlisted as `known_gap: "F4"` on cases `38` (C), `CPP_161` (C++
-  member-object receivers), `CPP_179` (`operator->`) and `CPP_229`. Found 2026-10-13 while adding member-object receivers (spec 030).
+- **Status:** **open**, allowlisted as `known_gap: "F4"` on cases `38` (C) and `CPP_179`
+  (`operator->`). Found 2026-10-13 while adding member-object receivers (spec 030). On
+  2026-11-23, spec 050 resolved the C++ receiver arms, `CPP_161` (member-object receivers) and
+  `CPP_229` (arrays of objects), in the frontend. A receiver named by a path is written back after
+  the call as the whole object **and then each data member by name**, so the write-back spells
+  `.in.v` (`write_back_object`). These are stores, which `ctadl index`'s dead-temp elimination
+  keeps: measured with the harness running `ssa::Pipeline::index_default()`, every case still
+  agrees. That is unlike the dead-load hint rejected below. Main's cell model made this arm much
+  wider: every address-taken C++ object is a receiver named by a path (`a.deref`).
   `CPP_237` (a method call on a captured `this`) was resolved on 2026-10-20 in the frontend: the
   method now copies the lambda's slot back member by member, which spells each member path in-block.
 - **What:** taint lives at a path only if that path is in the `paths` gate. Codegen seeds the

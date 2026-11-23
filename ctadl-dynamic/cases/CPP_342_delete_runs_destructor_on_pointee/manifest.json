@@ -1,0 +1,6 @@
+{
+  "name": "CPP_342_delete_runs_destructor_on_pointee",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `~B() { sink(v); }`; `B* p = new B(); p->v = source(); delete p`. `delete p` destroys `*p`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_333_pointer_method_on_address_of_local",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `B b; B* p = &b; p->set(source()); sink(b.v)`. `p->set` dispatches on `*p`, b's storage `b.deref` (`&b` makes b a cell). s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

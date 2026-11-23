@@ -1,7 +1,7 @@
-/* C++ member-object receivers (spec 030) x F4 (OPEN, known gap; `m2_member_method_from_main`):
-   `o.in.set(source()); sink(o.in.get())`. Both calls dispatch on the member, but the taint must
-   sit at `o.in.v`, a path only callees spell, so the admissibility gate drops it (C case 38).
-   s=none d=flow. */
+/* C++ member-object receivers (spec 030), POSITIVE (`m2_member_method_from_main`), formerly
+   F4: `o.in.set(source()); sink(o.in.get())`. Both calls dispatch on the member. The taint sits
+   at `.in.v`, a path only the callees spell; since spec 050 the receiver's write-back stores each
+   member by name, which spells it, so the path is admissible. s=flow d=flow agree. */
 extern "C" int source();
 extern "C" void sink(int);
 

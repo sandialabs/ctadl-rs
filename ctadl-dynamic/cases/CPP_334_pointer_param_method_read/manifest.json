@@ -1,0 +1,6 @@
+{
+  "name": "CPP_334_pointer_param_method_read",
+  "description": "C++ pointers follow the `*p` model (spec 050), POSITIVE: `int read(B* p) { return p->get(); }`; `a.set(source()); sink(read(&a))`. The callee's receiver is `*p`, `@p0.deref`. s=flow d=flow agree.",
+  "label": "Test",
+  "expect_flow": true
+}

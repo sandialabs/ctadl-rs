@@ -1,7 +1,6 @@
 {
   "name": "CPP_229_object_array_set_get",
-  "description": "C++ arrays of objects (spec 038), POSITIVE: `arr[1].set(source()); sink(arr[1].get())` -- dispatched correctly, blocked by F4. Allowlisted as known_gap F4.",
+  "description": "C++ arrays of objects (spec 038), POSITIVE: `arr[1].set(source()); sink(arr[1].get())`. The receiver's write-back stores each member by name (spec 050), so the element's member path is admissible. F4 arm resolved. s=flow d=flow agree.",
   "label": "Test",
-  "expect_flow": true,
-  "known_gap": "F4"
+  "expect_flow": true
 }
