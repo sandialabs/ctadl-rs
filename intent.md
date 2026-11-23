@@ -1,4 +1,4 @@
-# Intent: write what a step says as structured step properties, in `ctadl query`
+# Intent: write what a step says as structured step properties, in `ctadl query` - DO-NOT-MERGE
 
 A step of a flow names its tainted vertex and callee only in message text. Write them as
 structured step properties, which `diff-query` then compares: `taintVertex`, a string, and
