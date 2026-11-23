@@ -88,8 +88,10 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
   `summarized`.
 - R5. **Every step says something about callees.** Every step has `callees` or
   `summarized`, never both.
-- R6. **By content.** No step property depends on function ids or on the order of the call
-  list. The instruction id in a `call-arg` vertex is the one id a property holds.
+- R6. **Ids.** `callees` and `summarized` do not depend on function ids, instruction ids or
+  the order of the call list. `taintVertex` holds one index-local number, the instruction id
+  in a `call-arg` vertex, as the result property of that name does; `diff-query` drops it
+  before comparing (`ctadl-query-diff/src/parse.rs:415`).
 - R7. **Messages.** A call step's message names the function the path enters. A return
   step's message is unchanged. Where a source, sink or summarized step's
   message names a callee, it names the site's callee whose name sorts first.
