@@ -530,6 +530,24 @@ in. It is either `ctadl` not being deterministic run to run (a finding about `in
 `query`, outside this change) or `diff-query` comparing something it should not; telling
 which is the user's call, and no code changes in this phase.
 
+**As built** (release `ctadl` of `28a3e2921`). All 38 apps ran in both runs; none is
+excluded. All 304 comparisons (38 apps × 4 profiles × 2 modes) are `IDENTICAL` with exit 0.
+`ct-bench`'s status was the same before and after.
+- Results per app, the same in both runs: `human` 3–1028 (3529 in all), `agent` 6–1043
+  (5125), `machine` 4–2733 (11406), `debug` 5–2756 (11636). Notifications (`agent`) 35–8997
+  (59527 in all); one invocation per file.
+- The r1 and r2 SARIF differ byte for byte in every pair, but only in the run directory path
+  and the `*TimeUtc` fields: masked, all 152 pairs are equal.
+- `diff-query`: median 0.01 s and 10.2 MB; at most 0.09 s (`vibleaker_android_samp`,
+  `debug`) and 59.5 MB (`cajino_baidu`, `debug`, whose 9.5 MB SARIF is the largest).
+- The largest `ctadl` step peaked at 3.10 GiB; the whole run took 1150 s. `memguard.sh` once
+  killed `hummingbad_android_samp`'s r1 `debug` query as it exited (peak 0.50 GiB), when it
+  could not read the footprint of a process that was going away; that app was rerun alone,
+  both runs, and passed.
+- Data and scripts: `$TMPDIR/taintbench/` (`results.tsv`, `run.sh`, `retry.sh`). The TSV was
+  rebuilt from the saved `diff-query` outputs (`make_tsv.sh`), since GNU `stat` in the dev
+  shell garbled `run.sh`'s SARIF-size column; the exit codes are those recorded at run time.
+
 ## Files that change
 
 | File | Change | Phase |
