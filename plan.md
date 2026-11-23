@@ -191,6 +191,14 @@ changing it is the user's call. `endpoints_result` (`canon.rs:1061`) is not chan
 The controller also reads `git diff <phase 1 commit> -- sarif-canon/src` and checks that no
 `spec fn` body and no `requires` or `ensures` line changed.
 
+**As built** (`22339af01`). Only `order.rs` changed. `lemma_ord_step` is proved through the
+key `(kinds, (location, (vertex, callee)))` as `lemma_ord_props` is, with one call to
+`lemma_strict_opt`; `cmp_step` needed no hint. The generator change alone did not test the
+new comparison (a `cmp_step` that skipped `vertex` or `callee` still passed, since two random
+results almost never agree up to a step's properties), so the model test's "change one field
+of a copy" case also changes a step's `vertex` or `callee`, through a helper `last_step`;
+both broken versions then fail. Verus: `sarif-canon` 224 verified, 0 errors, nothing admitted.
+
 ## Phase 3: notifications and statuses (R4–R7, R10, R11; D2, D3, D4)
 
 Depends on: 1 (for `parse.rs` only; it uses none of Phase 1's code).
