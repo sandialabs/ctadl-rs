@@ -9,14 +9,7 @@ No code, comment, help text or document may cite a number from the spec or from 
 
 ## Corrections to the spec
 
-- P1. **The renamed field is in the theorems' definitions, and has no new name.** D3 renames
-  the canonical step's `callee` field; R16 says the theorems' statements do not change. The
-  field is read by two definitions the statements are built from, `step_permuted`
-  (`sarif-canon/src/theorems.rs:91`) and `step_renumbered` (`theorems.rs:162`), and by the
-  smoke tests (`sarif-canon/src/smoke.rs:896`). D3 does not give the new name. This plan
-  assumes the name `call_info`, and that changing that one identifier in those two definitions
-  is not a change of statement.
-- P2. **Which name a site's callees are sorted by.** D2 sorts by `facts.id_to_name`. The name
+- P1. **Which name a site's callees are sorted by.** D2 sorts by `facts.id_to_name`. The name
   that is written is `source_data.id_to_name`, which starts as a copy of it
   (`ctadl-ascent/src/query_engine/formatter.rs:2762`) and which source info then overwrites
   for functions it knows (`formatter.rs:2274`). If the two ever differ, "the callee whose name
@@ -29,19 +22,23 @@ No code, comment, help text or document may cite a number from the spec or from 
 | Wave | Phases | Why |
 | --- | --- | --- |
 | 0 | 0 | baseline on the unchanged tree |
-| 1 | 1, 2 | 1 renames a field in `sarif-canon` and `ctadl-query-diff`; 2 changes the callees of a site in the formatter; disjoint files |
-| 2 | 3, 4 | 3 needs 1's field; 4 needs 2's map; disjoint files |
-| 3 | 5 | needs the properties 4 writes and the reader 3 changes |
-| 4 | 6 | documents and acceptance |
+| 1 | 1, 3 | 1 states the verified step with `callees` and `summarized`; 3 changes the callees of a site in the formatter; disjoint files |
+| 2 | 2, 4, 5 | 2 proves 1's statements; 4 needs 1's types; 5 needs 3's map; disjoint files |
+| 3 | 6 | needs the properties 5 writes and the reader 4 changes |
+| 4 | 7 | documents and acceptance; needs 2's proofs complete |
 
-Phase 1 is a rename with no behavior change, so a Verus failure after it has one cause.
-Phase 2 changes results only at call sites with several callees, and removes two result
-properties; phase 4 only adds step properties and changes a call step's message at such a
-site. So a regression delta after 2 is about which callee is named, and after 4 about steps.
-Phase 3 changes what `diff-query` reads while the tests still add step properties themselves;
-phase 5 then moves those tests onto the real output. Phases 3 and 5 both edit
-`ctadl-ascent/tests/integration/diff_query.rs`; they are in different waves. In wave 2, phase
-3 owns `diff_query.rs` and phase 4 does not touch it.
+Wave 2 starts after the user has reviewed phase 1's statements. Phase 1 changes the verified
+types and what is claimed about them, with no change in what `diff-query` reports; phase 2
+only proves. So a Verus failure is about a statement in 1 and about a proof in 2. Phase 3
+changes results only at call sites with several callees, and removes two result properties;
+phase 5 only adds step properties and changes a call step's message at such a site. So a
+regression delta after 3 is about which callee is named, and after 5 about steps. Phase 4
+changes what `diff-query` reads while the tests still add step properties themselves; phase 6
+then moves those tests onto the real output. Phases 1 and 4 both edit
+`ctadl-query-diff/src/parse.rs` and `render.rs`, and phases 4 and 6 both edit
+`ctadl-ascent/tests/integration/diff_query.rs`; each pair is in different waves. In wave 2,
+phase 2 owns `sarif-canon`, phase 4 owns `ctadl-query-diff` and `diff_query.rs`, and phase 5
+owns the formatter.
 
 Test commands used throughout:
 
@@ -61,7 +58,8 @@ Depends on: nothing.
 
 **What.** Record what the unchanged tree does, for R8, R11 and R16.
 
-- `cargo test --workspace` and `scripts/verus.sh .` pass. Record the Verus summary lines.
+- `cargo test --workspace` and `scripts/verus.sh .` pass. Record the Verus summary lines,
+  and the output of `grep -n 'admit()\|assume(\|external_body' sarif-canon/src/*.rs`.
 - `cargo xtask regression` passes. It prints `Scratch root: <dir>`; copy every `*.sarif`
   under that root, keeping relative paths, to a directory outside the repo. This is the
   baseline SARIF. Record the pass, fail and xfail counts.
@@ -69,41 +67,98 @@ Depends on: nothing.
 
 **Gate.** The three commands pass; the baseline directory holds the SARIF files. No commit.
 
-## Phase 1: rename the canonical step's field (D3, R16)
+## Phase 1: statements for `callees` and `summarized` (R16, D3)
 
 Depends on: 0.
 
-**What.** Rename the field `callee` of the raw and canonical step to `call_info` (P1), and
-restate its comment: it holds one optional atom for what the step says about callees. No
-behavior changes: the parser still fills it from `callee`. No theorem statement changes; the
-only edits in `theorems.rs` are the identifier in two definitions.
+**What.** The raw and the canonical step hold `callees`, an optional bag of atoms, and
+`summarized`, an optional boolean, in place of `callee`. This phase writes the types, the
+definitions, the contracts and the theorems' definitions for them, and smoke tests of those
+statements. The executable code is the real code, since `cargo test` runs it: it is a few
+lines per function. A proof that no longer goes through is admitted (`admit()`), and each
+admit is listed in the commit message. `diff-query` reports what it did: the parser still
+reads `callee`, and hands it over as a one-name `callees`.
 
 **Files.**
-- `sarif-canon/src/types.rs:133` — the comment and the field of `RawStep`; the field at
-  `:186` (`CanonStep`), `:267` (`RawStepV`), `:296` (`CanonStepV`); the views at `:376`,
-  `:421`.
-- `sarif-canon/src/prims.rs:523`, `:837`; `sarif-canon/src/order.rs:175`, `:525`, `:1258`,
-  `:1436`, `:1548`, `:1632`; `sarif-canon/src/canon.rs:67`, `:76`, `:773` — the identifier.
-- `sarif-canon/src/theorems.rs:91`, `:162` — the identifier, nothing else.
-- `sarif-canon/src/smoke.rs` — the identifier (16 uses, from `:90`); comments at `:893`,
-  `:905`, `:1197`, `:1249`, `:1274` say what the atom holds without naming a SARIF property.
-- `ctadl-query-diff/src/parse.rs:229` and its tests (`:725`, `:744`, `:751`);
-  `ctadl-query-diff/src/render.rs:99` — the identifier.
+- `sarif-canon/src/types.rs:133` — `RawStep`: `callees: Option<Vec<A>>` ("`properties.callees`,
+  a bag") and `summarized: Option<bool>` in place of `callee`; the same in `CanonStep`
+  (`:186`, its `callees` sorted), `RawStepV` (`:267`) and `CanonStepV` (`:296`) with
+  `Option<Seq<A>>`; the views at `:376`, `:421`.
+- `sarif-canon/src/canon.rs:55` — `spec_canon_step`: `callees` is
+  `spec_canon_atoms(oa, s.callees)`, as a result's `source_fns` is (`:144`); `summarized` is
+  copied. `canon_step` (`:765`) does the same with `canon_opt_atoms` (`:946`); its contract
+  is unchanged in form: it returns `spec_canon_step`.
+- `sarif-canon/src/order.rs:169` — `ord_step` compares `callees` with `ord_opt_atoms`
+  (`:147`) and then `summarized` by an order on an optional boolean (absent, `false`,
+  `true`), a new definition. `cmp_step` (`:1258`) computes it; the lemma at `:518` that
+  `ord_step` is a strict total order keeps its statement. The model in the tests (`:1436`,
+  `:1548`, `:1632`) gets the two fields.
+- `sarif-canon/src/prims.rs:523`, `:837` — `copy_step` copies both fields; its contract
+  (`r@ == s@`) is unchanged.
+- `sarif-canon/src/theorems.rs:91` — `step_permuted`: `opt_atoms_permuted(x.callees,
+  y.callees)` and `x.summarized == y.summarized` in place of `x.callee == y.callee`. `:162` —
+  `step_renumbered`: both equal. No theorem signature changes
+  (`theorem_canon_invariant`, `:1132`; `theorem_diff_empty_iff_equal`, `:1160`).
+- `sarif-canon/src/smoke.rs` — the step builders (`:90`, `:221`, `:896`, `:900`) take the two
+  fields; the smoke tests below.
+- `sarif-canon/src/u32_atoms.rs`, `canon.rs` tests (`:1240`, `:1293`) — the two fields where
+  a step is built.
+- `ctadl-query-diff/src/parse.rs:229` — `callees` is the `callee` string as a one-element
+  list, `summarized` is `None`; tests at `:725`, `:744`, `:751` follow. `render.rs:99` prints
+  the one name as `callee`. Both are replaced in phase 4.
 
 **Tests.**
-- Existing, still passing unchanged: `cargo test -p sarif-canon -p ctadl-query-diff`, and the
-  whole workspace.
-- Verus: `scripts/verus.sh .` verifies with the same counts as phase 0.
+- Smoke, in `smoke.rs`, using no admitted fact:
+  - not vacuous: `smoke_permuted_bags_holds` (`:1249`) and `smoke_renumbered_holds` (`:1274`)
+    on steps that have a two-name `callees`, written in different orders in the two runs for
+    the first, and a `summarized`;
+  - passes: the canonical step of `callees: [b, a]` has `[a, b]`; `summarized: Some(true)`
+    is kept; `None` stays `None` for both;
+  - fails: two runs that differ only in a step's `callees` (`[a]` and `[b]`; `[a]` and
+    `[a, a]`; `Some([])` and `None`) have different canonical forms and are not
+    `step_permuted`; the same for `summarized` (`Some(true)`, `Some(false)`, `None`); the
+    test at `:1197` restated for `callees`.
+- Existing, still passing unchanged: `cargo test --workspace` (the `diff-query` tests see no
+  change).
+- Verus: `scripts/verus.sh .` verifies, with the admits listed.
 
 **Gate.** `cargo fmt --all -- --check`; `cargo clippy --workspace -- -Dwarnings`;
 `cargo test --workspace`; `scripts/verus.sh .`;
-`git diff <phase 0 commit> -- sarif-canon/src/theorems.rs` shows two changed lines, each the
-identifier only; `grep -n 'callee' sarif-canon/src/*.rs` finds only comments that name the
-SARIF properties older files hold (`types.rs:68`).
+`grep -n '\bcallee\b' sarif-canon/src/*.rs` finds only `types.rs:68`;
+`git diff <phase 0 commit> -- sarif-canon/src/theorems.rs` changes no `theorem_` signature.
 
-**Review.** The controller reads the `theorems.rs` diff before wave 2 starts.
+**Review.** The user checks the statements (the types, `spec_canon_step`, `ord_step`,
+`step_permuted`, `step_renumbered` and the smoke tests) against the spec before wave 2.
 
-## Phase 2: every callee of a call site (R6, R9, R10, D2)
+## Phase 2: proofs for `callees` and `summarized` (R16)
+
+Depends on: 1.
+
+**What.** Replace every admit of phase 1 with a proof. This phase may add helper
+definitions and lemmas, proof blocks and invariants. It does not change a statement of
+phase 1: no type, definition, contract, theorem or smoke test. If a statement is false or
+cannot be proved, stop and report; the change is the user's call. No behavior changes.
+
+**Files.**
+- `sarif-canon/src/order.rs` — the order on an optional boolean is a strict total order;
+  `ord_step` is one (`:518`); `cmp_step` computes it.
+- `sarif-canon/src/canon.rs` — `canon_step` returns `spec_canon_step`.
+- `sarif-canon/src/theorems.rs` — the step case of the permutation lemma uses
+  `lemma_opt_atoms_permuted` (`:665`) for `callees`; the renumbering case is equality.
+- `sarif-canon/src/prims.rs` — whatever of `copy_step` and the lemmas about steps was
+  admitted.
+
+**Tests.**
+- Verus: `scripts/verus.sh .` verifies with no admit.
+- Existing, still passing: `cargo test -p sarif-canon`.
+
+**Gate.** `cargo fmt --all -- --check`; `cargo clippy --workspace -- -Dwarnings`;
+`cargo test --workspace`; `scripts/verus.sh .`;
+`grep -n 'admit()\|assume(\|external_body' sarif-canon/src/*.rs` prints what phase 0
+recorded. The controller checks that `git diff <phase 1 commit> -- sarif-canon/src` changes
+no statement and that `smoke.rs` is unchanged.
+
+## Phase 3: every callee of a call site (R6, R9, R10, D2)
 
 Depends on: 0.
 
@@ -120,7 +175,7 @@ properties are not written yet.
   `endpoint_callee` from `ctx.facts.call` and the name map. Sort each site's list by name
   (compare borrowed names; a function with no name compares as `func#<id>`), then drop
   entries whose name repeats. Build it after `formatter.rs:2765`, from
-  `source_data.id_to_name` (P2). One entry per row of `facts.call`; no other copy of the
+  `source_data.id_to_name` (P1). One entry per row of `facts.call`; no other copy of the
   call list.
 - `formatter.rs:3286` — `endpoint_callee` takes the new map and returns the first callee,
   else `infunc`. Add `endpoint_callees`, returning the whole list (or `infunc` alone).
@@ -154,32 +209,30 @@ properties are not written yet.
 `cargo test --workspace`; `cargo xtask regression`;
 `grep -n 'sourceCallee\|sinkCallee' ctadl-ascent/src` finds nothing.
 
-## Phase 3: `diff-query` reads `callees` and `summarized` (R12, R13, R14, D3)
+## Phase 4: `diff-query` reads `callees` and `summarized` (R12, R13, R14, D3)
 
 Depends on: 1.
 
-**What.** `step` reads `callees` and `summarized` in place of `callee`, and puts in the
-step's `call_info` atom the text of a JSON object with the keys the step has: `callees`
-sorted with duplicates dropped, `summarized` as written; no atom when the step has neither.
-The renderer prints the object's keys back under `properties`. `sarif-canon` does not change.
-This changes behavior for files with step `callee`, `callees` or `summarized`; `ctadl query`
-writes none of them before phase 4, so on its own output nothing changes.
+**What.** `step` reads `callees` and `summarized` in place of `callee`. It hands `callees`
+to the canonical step with repeated names dropped, and `summarized` as written; the verified
+code sorts `callees`. The renderer prints both under `properties`. `sarif-canon` does not
+change. This changes behavior for files with step `callee`, `callees` or `summarized`;
+`ctadl query` writes none of them before phase 5, so on its own output nothing changes.
 
 **Files.**
-- `ctadl-query-diff/src/parse.rs:228` — `step` builds the atom. `callees` must be an array
-  of strings and `summarized` a boolean, else `Error::Property` with `on_step: true` and
-  `expected` `"a list of strings"` or `"a boolean"`. Build the text with `serde_json` from a
-  map with sorted keys, so equal content gives equal text. `step_prop` (`:235`) stays for
-  `taintVertex`.
-- `ctadl-query-diff/src/render.rs:99` — parse the atom's text and insert its keys into
-  `props`; update the module comment at `:5`.
+- `ctadl-query-diff/src/parse.rs:228` — `step` reads the two properties. `callees` must be
+  an array of strings and `summarized` a boolean, else `Error::Property` with `on_step: true`
+  and `expected` `"a list of strings"` or `"a boolean"`. Intern each name and drop an atom
+  already in the list. `step_prop` (`:235`) stays for `taintVertex`.
+- `ctadl-query-diff/src/render.rs:99` — print `callees` (a list, kept when empty) and
+  `summarized` under `properties`; update the module comment at `:5`.
 - `ctadl-query-diff/src/parse.rs` tests (`:540`, `:558`, `:885`, `:926`, `:1123`) and
   `ctadl-query-diff/src/tests.rs` (`:97`, `:290`, `:530`, `:590`–`:612`, `:674`) — write
   `callees` lists where they wrote `callee`.
 - `ctadl-ascent/tests/integration/diff_query.rs:199` — `with_step_props` writes
   `"callees": ["callee_<k>"]`; `changed_step_property` (`:1160`) edits `callees[0]`, and its
   renumbering loop (`:1196`) rewrites only string values. The module comment at `:5` names
-  `callees`. The helper itself stays until phase 5.
+  `callees`. The helper itself stays until phase 6.
 
 **Tests.**
 - New, `ctadl-query-diff/src/tests.rs`:
@@ -199,17 +252,16 @@ writes none of them before phase 4, so on its own output nothing changes.
   - Printed form, extending `:290`: a row shows
     `"properties":{"callees":["a","b"],"summarized":true,"taintVertex":...}` with only the
     keys present.
-- New, `parse.rs` tests: the atom's text for `{callees:["b","a","b"]}` is the text for
-  `{callees:["a","b"]}`; for `summarized` only; for both; absent for neither.
-- Existing, still passing: the rest of `cargo test --workspace`; `scripts/verus.sh .`
-  (no `sarif-canon` change).
+- New, `parse.rs` tests: `callees: ["b","a","b"]` parses to the two atoms `b`, `a`;
+  `summarized` to `Some(true)` or `Some(false)`; a step with neither to `None` and `None`.
+- Existing, still passing: the rest of `cargo test --workspace`.
 
 **Gate.** `cargo fmt --all -- --check`; `cargo clippy --workspace -- -Dwarnings`;
 `cargo test --workspace`; `git diff --stat <phase 1 commit> -- sarif-canon` is empty.
 
-## Phase 4: `ctadl query` writes step properties (R1–R5, R7, R8, D1)
+## Phase 5: `ctadl query` writes step properties (R1–R5, R7, R8, D1)
 
-Depends on: 2.
+Depends on: 3.
 
 **What.** One small value describes a step before it is written: its vertex, what it says
 about callees (one name, `summarized`, or nothing), and the function its message names.
@@ -226,7 +278,7 @@ and `executionOrder` do not change: the dedup test does not read the new value.
   and `callees` (a one-element list) or `summarized: true` when the value has them; sets it
   on the `ThreadFlowLocation` (`:2857`). The test at `:2845`–`:2850` is not edited.
 - `formatter.rs:2869`, `:2987` — source and sink steps: vertex only; the message names the
-  site's first callee, as after phase 2.
+  site's first callee, as after phase 3.
 - `formatter.rs:2920` — the edge's step. A call edge: `callees` is the destination's
   function. A return edge: `callees` is the origin's function (`id_to_node[src_id].0`); the
   message keeps naming the destination's. `site_by_edge` holds call and return edges only
@@ -236,7 +288,7 @@ and `executionOrder` do not change: the dedup test does not read the new value.
   the next window is in hand. When the edge leaving `dst_id` (`edge_by_edge` at
   `(dst_id, path[i + 2])`) is a call edge, the step is a call step: `callees` and the message
   name `id_to_node[path[i + 2]].0`. Otherwise, or when there is no next window, it is a
-  summarized step: `summarized: true`, and the message is what it was after phase 2.
+  summarized step: `summarized: true`, and the message is what it was after phase 3.
 - New fixtures under `ctadl-ascent/tests/tnt/` (see Tests).
 - New `ctadl-ascent/tests/integration/step_props.rs`, and its `mod` line in
   `ctadl-ascent/tests/integration/main.rs:14`.
@@ -276,12 +328,12 @@ way `cli.rs:223` runs a `.tnt` fixture:
 **Gate.** `cargo fmt --all -- --check`; `cargo clippy --workspace -- -Dwarnings`;
 `cargo test --workspace`; `cargo xtask regression`; the comparison with the baseline SARIF.
 
-## Phase 5: the metamorphic tests run on real properties (R15, R17, D4)
+## Phase 6: the metamorphic tests run on real properties (R15, R17, D4)
 
-Depends on: 3, 4.
+Depends on: 4, 5.
 
 **What.** `with_step_props` and the "with step properties" base go; the SARIF `ctadl query`
-wrote is the only base. A second fixture, the two-callee program of phase 4, is indexed twice
+wrote is the only base. A second fixture, the two-callee program of phase 5, is indexed twice
 with the two callees' function ids in opposite orders. Tests only.
 
 **Files.**
@@ -325,9 +377,9 @@ with the two callees' function ids in opposite orders. Tests only.
 `grep -n 'with_step_props\|step_props:' ctadl-ascent/tests/integration/diff_query.rs` finds
 nothing.
 
-## Phase 6: documents and acceptance (R19)
+## Phase 7: documents and acceptance (R19)
 
-Depends on: 5.
+Depends on: 2, 6.
 
 **What.** The documents say what is written and compared. No code changes but help text and
 comments.
@@ -349,6 +401,7 @@ comments.
   `callees` and `summarized`. `docs/spec.md:219` (§4.5) — a step carries `taintVertex`, and
   `callees` or `summarized`.
 - `sarif-canon/src/types.rs:68` — unchanged if it still reads true; check.
+- `sarif-canon/src/lib.rs:14`–`:31` — "What is proved" still reads true; check.
 
 **Tests.**
 - Existing: `cargo test --workspace` (a test of the help text, if any, still passes).
@@ -364,30 +417,29 @@ finds no citation of this plan or the spec.
 
 | File | Change | Phase |
 | --- | --- | --- |
-| `sarif-canon/src/types.rs`, `prims.rs`, `order.rs`, `canon.rs`, `theorems.rs`, `smoke.rs` | field renamed, comment restated | 1 |
-| `ctadl-query-diff/src/parse.rs` | field renamed; then `callees` and `summarized` read | 1, 3 |
-| `ctadl-query-diff/src/render.rs` | field renamed; then the object's keys printed | 1, 3 |
-| `ctadl-query-diff/src/tests.rs` | `callees` and `summarized` tests | 3 |
-| `ctadl-ascent/src/query_engine/formatter.rs` | site callees; then step properties | 2, 4 |
-| `ctadl-ascent/tests/integration/cli.rs` | reads `sinkFunctions` | 2 |
-| `ctadl-ascent/tests/integration/diff_query.rs` | writes `callees`; then real properties | 3, 5 |
-| `ctadl-ascent/tests/integration/step_props.rs`, `main.rs` | new tests | 4 |
-| `ctadl-ascent/tests/tnt/step_props_*.tnt` | new fixtures | 4 |
-| `docs/debugging.md`, `docs/spec.md`, `ctadl-ascent/src/main.rs` | documents, help text | 6 |
+| `sarif-canon/src/types.rs`, `canon.rs`, `order.rs`, `prims.rs`, `theorems.rs`, `smoke.rs`, `u32_atoms.rs` | `callees` and `summarized` in the step: statements, then proofs | 1, 2 |
+| `ctadl-query-diff/src/parse.rs`, `render.rs` | the new fields filled from `callee`; then `callees` and `summarized` read and printed | 1, 4 |
+| `ctadl-query-diff/src/tests.rs` | `callees` and `summarized` tests | 4 |
+| `ctadl-ascent/src/query_engine/formatter.rs` | site callees; then step properties | 3, 5 |
+| `ctadl-ascent/tests/integration/cli.rs` | reads `sinkFunctions` | 3 |
+| `ctadl-ascent/tests/integration/diff_query.rs` | writes `callees`; then real properties | 4, 6 |
+| `ctadl-ascent/tests/integration/step_props.rs`, `main.rs` | new tests | 5 |
+| `ctadl-ascent/tests/tnt/step_props_*.tnt` | new fixtures | 5 |
+| `docs/debugging.md`, `docs/spec.md`, `ctadl-ascent/src/main.rs` | documents, help text | 7 |
 
 Not touched: `xtask/src/assertions.rs` (its readers of message text stay);
 `ctadl-ascent/src/query_engine/search.rs`; `ctadl-index`; `multiset-diff`, `order-laws`,
-`index-canon`; `sarif-canon`'s theorem statements and `scripts/verus.sh`.
+`index-canon`; the signatures of `sarif-canon`'s theorems; `scripts/verus.sh`.
 
 ## Acceptance
 
 - `cargo fmt --all -- --check`, `cargo clippy --workspace -- -Dwarnings`,
   `cargo test --workspace`, `cargo xtask regression` and `scripts/verus.sh .` pass on the
   last commit, with the regression and Verus counts of phase 0.
-- R8, R11: the comparison of phase 4 against the baseline SARIF, run again on the last
+- R8, R11: the comparison of phase 5 against the baseline SARIF, run again on the last
   commit, differs only at call sites with several callees.
-- R16: `git diff <phase 0 commit> -- sarif-canon/src/theorems.rs` is the two identifier
-  lines of phase 1.
+- R16: `scripts/verus.sh .` verifies with the admits phase 0 recorded and no other, and
+  `git diff <phase 1 commit> -- sarif-canon/src` changes no statement.
 - Names that must be gone: `grep -rn 'sourceCallee\|sinkCallee' ctadl-ascent/src` and
   `grep -rn 'with_step_props' ctadl-ascent` find nothing; `"callee"` is read nowhere in
   `ctadl-query-diff/src` outside tests of older files.
