@@ -1,7 +1,7 @@
 # Step properties written by `ctadl query`: requirements and design - DO-NOT-MERGE
 
-Source: `intent.md`. This refines what `ctadl query` writes on each step of a code flow, so
-that `ctadl diff-query` (which already reads the two properties) has something to compare. It
+Source: `intent.md`. This refines what `ctadl query` writes on each step of a code flow, and adds
+the one property `ctadl diff-query` does not read yet. It
 must stay consistent with `docs/spec.md` (F9, F12, §4.5, §5) and `docs/debugging.md`
 (*Comparing two query outputs*). It does not sequence the work.
 
@@ -54,8 +54,10 @@ must stay consistent with `docs/spec.md` (F9, F12, §4.5, §5) and `docs/debuggi
 | Term | Meaning |
 | --- | --- |
 | **Step** | A `threadFlowLocation` of a code flow. |
-| **Step properties** | `taintVertex` and `callee` in a step's `properties` bag, each a string. |
-| **The site's callee** | Of the functions the final call graph gives a call site, the one whose name sorts first. |
+| **Step properties** | In a step's `properties` bag: `taintVertex` and `callee`, each a string, and `callees`, a list of strings. |
+| **The site's callees** | Every function the final call graph gives a call site. |
+| **Edge step** | A step written for a call or return edge of the path. |
+| **Summarized-call step** | A step written for an interior `call-arg` vertex, where the path crosses a call by the callee's summary. |
 
 ## Requirements
 
@@ -64,109 +66,131 @@ must stay consistent with `docs/spec.md` (F9, F12, §4.5, §5) and `docs/debuggi
 - R1. **`taintVertex` on every step.** Every step has a `taintVertex`: the vertex its message
   names, as `<variable><path>`, the form the result property of that name has
   (`formatter.rs:3325`).
-- R2. **`callee` on a call-site step.** A source, sink or summarized-call step has `callee`,
-  the name of the site's callee. When the call graph gives the site no callee, the step has no
-  `callee`.
-- R3. **`callee` on an edge step.** A call step's `callee` is the function called. A return
-  step's `callee` is the function returned from, which
-  the step's message does not name.
-- R4. **One callee, by name.** `callee` is one function name, never a list. At a site with
-  several callees it is the same name whatever ids the index gave the functions. (C1.)
-- R5. **Property and message agree.** Where a step's message names a callee (source, sink,
-  call, summarized call), it names the function in `callee`. A return step's message still
-  names the function returned into.
-- R6. **Steps do not change.** Which steps a flow has, their order, locations, `kinds` and
+- R2. **`callee` on an edge step.** A call step's `callee` is the name of the function called.
+  A return step's `callee` is the name of the function returned from, which the step's
+  message does not name. No other step has `callee`.
+- R3. **`callees` on a source or sink step.** A source or sink step has `callees`: the names
+  of the site's callees, each once, sorted. No other step has `callees`.
+- R4. **Nothing on a summarized-call step.** A summarized-call step has `taintVertex` only.
+  The edge it stands for does not say which callee's summary carried the taint.
+- R5. **By content.** No step property depends on function ids or on the order of the call
+  list. The instruction id in a `call-arg` vertex is the one id a property holds.
+- R6. **Messages.** A call or return step's message is unchanged. Where a source, sink or
+  summarized-call step's message names a callee, it names the site's callee whose name sorts
+  first.
+- R7. **Steps do not change.** Which steps a flow has, their order, locations, `kinds` and
   `executionOrder` are what they were. A step that was not written is still not written, and
-  its vertex appears nowhere. (C2.)
-- R7. **Nothing else changes.** Results, their properties, notifications, invocations and
-  message text are byte for byte what they were, with one exception: at a call site with
-  several callees, everything that names the site's callee names the one R4 picks. That is a
-  step's message, a `C0003`/`C0004` result's message and logical location, and a `C0001`
-  result's `sourceFunctions`, `sinkFunctions`, `sourceCallee` and `sinkCallee`.
+  its vertex appears nowhere. (C1.)
+- R8. **Results at a site with several callees.** A `C0001` result's `sourceFunctions` and
+  `sinkFunctions` hold all of the callees of its endpoints' sites, and `sourceCallee` and
+  `sinkCallee` the first of each. A `C0003`/`C0004` result's message and logical location
+  name the first by name.
+- R9. **Nothing else changes.** At a call site with one callee, results, their properties,
+  notifications, invocations and message text are byte for byte what they were. The `machine`
+  profile writes no steps, so only R8 can change its output.
 
-**What `diff-query` then sees**
+**What `diff-query` compares**
 
-- R8. **Renumbering is invisible.** Two queries of one program, indexed so that its function
-  and instruction ids differ, compare `IDENTICAL` with the step properties written, with and
-  without `--endpoints-only`, in every profile. This holds for a program with a call site
-  that has several callees.
-- R9. **`diff-query` does not change.** Its reader, canonical form, proofs and report are
-  untouched. Files written before this change still compare as they did.
+- R10. **`callees`.** A step is compared by its `callees` too, as a set: the order written
+  does not matter, and absent compares equal only to absent. Under `--endpoints-only` the
+  first and last step's `callees` are compared. A printed step shows it.
+- R11. **Malformed input.** A step `callees` that is not a list of strings is an error (exit
+  2), as a `callee` that is not a string is.
+- R12. **Old files.** Files written before this change compare as they did.
+- R13. **Renumbering is invisible.** Two queries of one program, indexed so that its function
+  and instruction ids differ, compare `IDENTICAL`, with and without `--endpoints-only`, in
+  every profile. This holds for a program whose source or sink is at a call site with
+  several callees.
+- R14. **Proofs.** The Verus theorems of `sarif-canon` still hold with `callees` in the
+  canonical step.
 
 **Tests and documents**
 
-- R10. **Tests on real properties.** The metamorphic tests of `diff-query` run on the
-  properties `ctadl query` wrote, not on ones the test added: a changed `taintVertex` or
-  `callee` is reported, at an interior step only without `--endpoints-only`, and renumbered
-  instruction ids are not.
-- R11. **What each step says is tested.** A test checks, on a flow that has all four kinds of
-  step, the `taintVertex` and `callee` of each, the return step's included, and that a step
-  at a site with no callee has no `callee`.
-- R12. **Documents.** `docs/debugging.md` (`:259`), the `diff-query` help text
+- R15. **Tests on real properties.** The metamorphic tests of `diff-query` run on the
+  properties `ctadl query` wrote, not on ones the test added. A changed `taintVertex`,
+  `callee` or `callees` is reported, at an interior step only without `--endpoints-only`.
+  Renumbered instruction ids and a reordered `callees` are not.
+- R16. **What each step says is tested.** A test checks, on a flow that has all four kinds of
+  step, the properties of each: the return step's `callee`, a source or sink step's `callees`
+  at a site with two callees, and that a summarized-call step has neither.
+- R17. **Documents.** `docs/debugging.md` (`:259`), the `diff-query` help text
   (`ctadl-ascent/src/main.rs:93`) and `docs/spec.md` (§5, `:261`) no longer say the
-  properties are not written. `docs/spec.md` §4.5 says a step carries them.
-  `docs/debugging.md` says what `callee` holds on a return step and at a site with several
-  callees, and when a flow's first or last step is not its source or sink. None of them, and
-  no code comment, cites a number from this document.
+  properties are not written, and name `callees` wherever they name `callee`. `docs/spec.md`
+  §4.5 says a step carries them. `docs/debugging.md` says which step has which property,
+  what `callee` holds on a return step, and when a flow's first or last step is not its
+  source or sink. None of them, and no code comment, cites a number from this document.
 
 ## Design
 
-### D1. What a step says (R1–R3, R5)
+### D1. What a step says (R1–R4, R6)
 
 One small value describes a step before it is written: its vertex (`FlowVariable`, `Path`),
-its `Option<FunctionId>` callee, and the function its message names. `push_site_step`
-(`formatter.rs:2801`) takes it in place of the finished message string, and renders both the
-message and the property bag from it. The message and the properties then cannot disagree
-about the vertex, and agree about the callee wherever the message names one.
+what it says about callees (one function, a site's callees, or nothing), and the function
+its message names. `push_site_step` (`formatter.rs:2801`) takes it in place of the finished
+message string, and renders both the message and the property bag from it. The message and
+the properties then cannot disagree about the vertex.
 
-| Step | `taintVertex` | `callee` | Message names |
-| --- | --- | --- | --- |
-| source, sink | endpoint vertex | the site's callee | `callee` |
-| call edge | destination vertex | destination's function | `callee` |
-| return edge | destination vertex | origin's function | destination's function |
-| summarized call | the `call-arg` vertex | the site's callee, or none | `callee`, else the enclosing function |
+| Step | `taintVertex` | `callee` | `callees` | Message names |
+| --- | --- | --- | --- | --- |
+| source, sink | endpoint vertex | | the site's callees | their first by name |
+| call edge | destination vertex | destination's function | | `callee` |
+| return edge | destination vertex | origin's function | | destination's function |
+| summarized call | the `call-arg` vertex | | | the site's first callee by name, else the enclosing function |
 
 The vertex is formatted by the one expression the result property uses
 (`formatter.rs:3325`), shared, not copied. The bag goes on the `ThreadFlowLocation`, where
-`diff-query` reads it, with `callee` left out when there is none.
+`diff-query` reads it.
 
 Invariant: the dedup test (`formatter.rs:2847`) does not read the new value. Whether a step
-is written depends on what it did before (R6).
+is written depends on what it did before (R7).
 
-### D2. The site's callee (R2, R4, R8)
+### D2. The site's callees (R3, R5, R6, R8)
 
-`call_callee` (`formatter.rs:2571`) keeps, for each site, the callee whose name sorts first,
-by the names in `facts.id_to_name`; a function with no name sorts by the `func#<id>` text the
-message already uses. Two callees with one name give one string, so no further tie-break is
-observable. The map stays one entry per call site.
+`call_callee` (`formatter.rs:2571`) becomes a map from a site to its callees, sorted by name
+and then deduplicated by name. Names come from `facts.id_to_name`; a function with no name
+takes the `func#<id>` text the message already uses. The map holds one entry per row of
+`facts.call`, which is what the vector it is built from holds.
 
-`endpoint_callee` (`formatter.rs:3286`) reads the same map, and so do its other users: the
-source and sink results (`formatter.rs:3328`) and a path result's `sourceFunctions` and
-`sinkFunctions` (`formatter.rs:3210`). A result and the step for the same endpoint then name
-one function. `diff-query` compares `sourceFunctions` and `sinkFunctions` already, so today
-two indexes that order the calls differently can differ there; with this they do not (R8).
-`endpoint_callee`'s fallback to `infunc` stays for results; a step takes `None` instead (R2).
+`endpoint_callee` (`formatter.rs:3286`) returns the first of a site's callees. Its users
+that want one function keep it: step messages and the source and sink results
+(`formatter.rs:3328`). A path result's `sourceFunctions` and `sinkFunctions`
+(`formatter.rs:3210`) take the whole list. `diff-query` compares those two already, so today
+two indexes that order the calls differently can differ there; with this they do not (R13).
+An endpoint step exists only for an endpoint with a call site, and that site was chosen from
+the call list, so `callees` is never empty.
 
-### D3. Tests (R8, R10, R11)
+### D3. `callees` in `diff-query` (R10–R12, R14)
+
+`RawStep` and `CanonStep` (`sarif-canon/src/types.rs:125`, `:181`) gain one optional atom,
+`callees`, as do their Verus views (`types.rs:262`, `:292`). `canon_step`
+(`sarif-canon/src/canon.rs:751`) copies it; `ord_step` and `cmp_step`
+(`sarif-canon/src/order.rs:169`, `:1230`) compare it after `callee`; `step_permuted` and
+`step_renumbered` (`sarif-canon/src/theorems.rs:86`, `:153`) require it equal. It is a plain
+atom, so no new sorting is proved.
+
+The parser makes the atom (`step`, `ctadl-query-diff/src/parse.rs:228`): it sorts the list,
+drops duplicates, writes it as the text of a JSON array, and interns that. The set
+comparison of R10 is therefore the parser's, covered by its tests, not by the proofs; the
+execution notifications are canonicalized the same way. `render.rs:99` prints the atom back
+as an array.
+
+Invariant: `endpoints_result` is not changed. It keeps whole steps, so the endpoint half of
+R10 follows from the step's new field.
+
+### D4. Tests (R13, R15, R16)
 
 `with_step_props` and the "with step properties" bases (`diff_query.rs:199`, `:224`) go: the
-real output is the base. `renumbered_ids` (`diff_query.rs:757`) then covers R8 for `ties.c`.
-A second fixture with a call through a function pointer or a virtual call that resolves to
-two functions, whose source or sink is at that call, covers R8 for several callees: indexed
-twice, with the callees' ids in opposite orders.
+real output is the base. `renumbered_ids` (`diff_query.rs:757`) then covers R13 for
+`ties.c`. A second fixture with a call through a function pointer or a virtual call that
+resolves to two functions, whose source or sink is at that call, covers R13 and R16 for
+several callees: indexed twice, with the callees' ids in opposite orders.
 
 The regression suite's readers of message text (`xtask/src/assertions.rs:204`, `:223`) do not
-change; the sink function they read is now the site's callee.
+change; the sink function they read is the site's first callee by name.
 
 ## Concerns
 
-- C1. **Several callees at one call site.** Options: one name, the first by name (assumed,
-  R4); every name, as a list. A list makes a changed callee set visible, but changes
-  `diff-query`'s reader and the proved canonical step (an atom becomes a sorted set). One
-  name keeps both, but a callee that is added or removed behind the first goes unseen, and a
-  source or sink step may name a function other than the one its model named, since the
-  endpoint does not record that.
-- C2. **A flow whose first or last step is not its source or sink.** See Background. Options:
-  accept and document (assumed, R6); always write the sink step, which adds a step to some
+- C1. **A flow whose first or last step is not its source or sink.** See Background. Options:
+  accept and document (assumed, R7); always write the sink step, which adds a step to some
   existing flows; give a function-anchored endpoint a step, which needs a location for it.
   Under `--endpoints-only` an accepted case compares an interior step in the endpoint's place.

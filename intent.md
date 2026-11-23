@@ -6,11 +6,18 @@ structured step properties, `taintVertex` and `callee`, which `diff-query` then 
 On a return step `callee` holds the function returned from. The message keeps naming the
 function returned into, the caller (`ctadl-ascent/src/query_engine/formatter.rs:2920`).
 
-Open questions, found while writing the spec for those changes:
+A call or return step has one `callee`, the function whose edge the step traverses. A call
+site with several callees does not change that.
 
-- A call site with several callees keeps one, whichever sorts last by function id
-  (`formatter.rs:2571`). Two indexes that number functions differently can then write
-  different `callee` values for one flow, which `diff-query` would report. Write every callee,
-  or pick one by name?
-- Several source (or sink) endpoints at one instruction give one step, with the first
-  endpoint's vertex only (`formatter.rs:2845`). Accept it, or write every vertex?
+A source or sink step has `callees` instead: every callee of its call site, by name. The
+endpoint does not record which of them its model named. `diff-query` compares it as a set.
+
+A step for a call crossed by its summary has neither: nothing records which callee's summary
+carried the taint.
+
+Open question, found while writing the spec for those changes:
+
+- A flow has one source and one sink endpoint, but its first or last step is not always
+  theirs: the sink step is dropped when the step before it is at the same instruction
+  (`formatter.rs:2847`), and an endpoint with no call site gets no step. Accept it, or always
+  write the endpoint's step?
