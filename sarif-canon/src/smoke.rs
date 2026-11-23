@@ -45,7 +45,7 @@ proof fn smoke_canon_bag_sorts()
 
 // ---------------------------------------------------------------------------
 // Concrete runs. Atoms: 1 `fail`, 2 `warning`, 10 the endpoints rule, 20 and 21 function
-// names, 30..=33 step kinds, 40 a URI.
+// names, 30..=33 step kinds, 40 a URI, 40 and 41 step properties.
 
 spec fn fail() -> u32 { 1 }
 
@@ -87,7 +87,7 @@ spec fn location(line: i64, i: usize) -> RawLocationV<u32> {
 
 /// A step with `executionOrder` `order` and one kind.
 spec fn step(order: i64, kind: u32) -> RawStepV<u32> {
-    RawStepV { order: Some(order), kinds: seq![kind], location: None }
+    RawStepV { order: Some(order), kinds: seq![kind], location: None, vertex: None, callee: None }
 }
 
 /// A C0001-like result: one location naming entry `i`, one code flow of one thread flow.
@@ -218,7 +218,7 @@ proof fn calc_bag_twice<T>(ord: spec_fn(T, T) -> Ordering, x: T)
 }
 
 spec fn canon_step(kind: u32) -> CanonStepV<u32> {
-    CanonStepV { kinds: seq![kind], location: None }
+    CanonStepV { kinds: seq![kind], location: None, vertex: None, callee: None }
 }
 
 proof fn calc_step(t: Seq<RawLogical<u32>>, order: i64, kind: u32)
@@ -887,6 +887,420 @@ proof fn smoke_rewritten_holds()
     let chain2 = seq![us, vs];
     assert(one_step(chain2[0], chain2[1]));
     assert(is_chain(chain2));
+}
+
+// ---------------------------------------------------------------------------
+// Step properties: a step's `taintVertex` and `callee` are part of what it is compared by.
+
+/// A step with `executionOrder` `order`, one kind, and these properties.
+spec fn step_props(order: i64, kind: u32, vertex: Option<u32>, callee: Option<u32>) -> RawStepV<u32> {
+    RawStepV { order: Some(order), kinds: seq![kind], location: None, vertex, callee }
+}
+
+spec fn canon_step_props(kind: u32, vertex: Option<u32>, callee: Option<u32>) -> CanonStepV<u32> {
+    CanonStepV { kinds: seq![kind], location: None, vertex, callee }
+}
+
+/// Steps numbered 1, 2, 3 with kinds 30, 31, 33, step `k` with `taintVertex` `v[k]` and
+/// `callee` `c[k]`.
+spec fn prop_steps(v: Seq<Option<u32>>, c: Seq<Option<u32>>) -> Seq<RawStepV<u32>> {
+    seq![step_props(1, 30, v[0], c[0]), step_props(2, 31, v[1], c[1]), step_props(3, 33, v[2], c[2])]
+}
+
+spec fn canon_prop_steps(v: Seq<Option<u32>>, c: Seq<Option<u32>>) -> Seq<CanonStepV<u32>> {
+    seq![canon_step_props(30, v[0], c[0]), canon_step_props(31, v[1], c[1]), canon_step_props(33, v[2], c[2])]
+}
+
+spec fn none3() -> Seq<Option<u32>> {
+    seq![None, None, None]
+}
+
+/// `canon_result` with these canonical steps.
+spec fn canon_result_of(name: u32, steps: Seq<CanonStepV<u32>>) -> CanonResultV<u32> {
+    CanonResultV {
+        rule: Some(rule()),
+        kind: fail(),
+        level: warning(),
+        locations: seq![CanonLocationV { physical: Some(physical(1)), logical: seq![name] }],
+        code_flows: seq![CanonCodeFlowV { thread_flows: seq![CanonThreadFlowV::Steps(steps)] }],
+        props: no_props(),
+    }
+}
+
+/// `canon_ends` with these canonical endpoints.
+spec fn canon_ends_of(a: CanonStepV<u32>, b: CanonStepV<u32>) -> CanonResultV<u32> {
+    CanonResultV {
+        rule: Some(rule()),
+        kind: fail(),
+        level: warning(),
+        locations: Seq::empty(),
+        code_flows: seq![CanonCodeFlowV { thread_flows: seq![CanonThreadFlowV::Endpoints(a, b)] }],
+        props: no_props(),
+    }
+}
+
+proof fn calc_step_props(t: Seq<RawLogical<u32>>, order: i64, kind: u32, vertex: Option<u32>, callee: Option<u32>)
+    ensures
+        spec_canon_step(ou(), t, step_props(order, kind, vertex, callee)) == Ok::<CanonStepV<u32>, Error>(
+            canon_step_props(kind, vertex, callee),
+        ),
+{
+    calc_bag_one(ou(), kind);
+}
+
+/// `calc_flow` for steps with any properties.
+proof fn calc_flow_of(t: Seq<RawLogical<u32>>, steps: Seq<RawStepV<u32>>, canon: Seq<CanonStepV<u32>>)
+    requires
+        steps.len() == canon.len(),
+        forall|k: int|
+            0 <= k < steps.len() ==> (#[trigger] steps[k]).order == Some((k + 1) as i64)
+                && spec_canon_step(ou(), t, steps[k]) == Ok::<CanonStepV<u32>, Error>(canon[k]),
+        0 < steps.len() < 100,
+    ensures
+        spec_canon_thread_flow(ou(), t, RawThreadFlowV { steps }) == Ok::<
+            CanonThreadFlowV<u32>,
+            Error,
+        >(CanonThreadFlowV::Steps(canon)),
+{
+    let orders = steps.map_values(|s: RawStepV<u32>| step_order(s));
+    assert forall|i: int, j: int|
+        0 <= i < j < orders.len() && (#[trigger] orders[i]) is Some && (#[trigger] orders[j]) is Some
+            implies orders[i]->Some_0 < orders[j]->Some_0 by {
+        assert(steps[i].order == Some((i + 1) as i64));
+        assert(steps[j].order == Some((j + 1) as i64));
+    }
+    let mapped = spec_canon_seq(steps, |s: RawStepV<u32>| spec_canon_step(ou(), t, s));
+    assert forall|k: int| 0 <= k < mapped.len() implies #[trigger] mapped[k] == Ok::<
+        CanonStepV<u32>,
+        Error,
+    >(canon[k]) by {
+        assert(steps[k].order == Some((k + 1) as i64));
+    }
+    calc_all_ok(mapped, canon);
+}
+
+/// `calc_result_full` for steps with any properties.
+proof fn calc_result_full_of(
+    t: Seq<RawLogical<u32>>,
+    i: usize,
+    name: u32,
+    steps: Seq<RawStepV<u32>>,
+    canon: Seq<CanonStepV<u32>>,
+)
+    requires
+        i < t.len(),
+        t[i as int].fqn == name,
+        spec_canon_thread_flow(ou(), t, RawThreadFlowV { steps }) == Ok::<
+            CanonThreadFlowV<u32>,
+            Error,
+        >(CanonThreadFlowV::Steps(canon)),
+    ensures
+        spec_canon_result_full(ou(), t, result(i, steps)) == Ok::<CanonResultV<u32>, Error>(
+            canon_result_of(name, canon),
+        ),
+{
+    let r = result(i, steps);
+    let cl = CanonLocationV { physical: Some(physical(1)), logical: seq![name] };
+    calc_location(1, i, t, name);
+    let locs = spec_canon_seq(r.locations, |l: RawLocationV<u32>| spec_canon_location(ou(), t, l));
+    calc_all_ok(locs, seq![cl]);
+    calc_bag_one(ord_location(ou()), cl);
+    let f = RawThreadFlowV { steps };
+    let cf = CanonCodeFlowV { thread_flows: seq![CanonThreadFlowV::Steps(canon)] };
+    calc_code_flow(t, f, CanonThreadFlowV::Steps(canon));
+    let cfs = spec_canon_seq(r.code_flows, |c: RawCodeFlowV<u32>| spec_canon_code_flow(ou(), t, c));
+    calc_all_ok(cfs, seq![cf]);
+    calc_bag_one(ord_code_flow(ou()), cf);
+    assert(spec_canon_props(ou(), no_props()) == no_props());
+}
+
+/// `calc_result_ends` for steps with any properties.
+proof fn calc_result_ends_of(name: u32, steps: Seq<CanonStepV<u32>>)
+    requires
+        steps.len() > 0,
+    ensures
+        spec_endpoints_result(ou(), canon_result_of(name, steps)) == Ok::<CanonResultV<u32>, Error>(
+            canon_ends_of(steps[0], steps.last()),
+        ),
+{
+    let c = canon_result_of(name, steps);
+    let ends = CanonThreadFlowV::Endpoints(steps[0], steps.last());
+    assert(spec_endpoints_flow(CanonThreadFlowV::Steps(steps)) == Ok::<CanonThreadFlowV<u32>, Error>(ends));
+    let cf = c.code_flows[0];
+    let flows = spec_canon_seq(cf.thread_flows, |f: CanonThreadFlowV<u32>| spec_endpoints_flow(f));
+    calc_all_ok(flows, seq![ends]);
+    calc_bag_one(ord_thread_flow(ou()), ends);
+    let cut = CanonCodeFlowV { thread_flows: seq![ends] };
+    let cfs = spec_canon_seq(c.code_flows, |f: CanonCodeFlowV<u32>| spec_endpoints_code_flow(ou(), f));
+    calc_all_ok(cfs, seq![cut]);
+    calc_bag_one(ord_code_flow(ou()), cut);
+}
+
+/// `result(0, prop_steps(v, c))` in `table()`, in full and cut to its endpoints.
+proof fn calc_prop_example(v: Seq<Option<u32>>, c: Seq<Option<u32>>)
+    requires
+        v.len() == 3,
+        c.len() == 3,
+    ensures
+        spec_canon_result(ou(), table(), None, result(0, prop_steps(v, c))) == Ok::<
+            CanonResultV<u32>,
+            Error,
+        >(canon_result_of(20, canon_prop_steps(v, c))),
+        spec_canon_result(ou(), table(), Some(rule()), result(0, prop_steps(v, c))) == Ok::<
+            CanonResultV<u32>,
+            Error,
+        >(canon_ends_of(canon_step_props(30, v[0], c[0]), canon_step_props(33, v[2], c[2]))),
+{
+    let steps = prop_steps(v, c);
+    let canon = canon_prop_steps(v, c);
+    calc_step_props(table(), 1, 30, v[0], c[0]);
+    calc_step_props(table(), 2, 31, v[1], c[1]);
+    calc_step_props(table(), 3, 33, v[2], c[2]);
+    assert forall|k: int| 0 <= k < steps.len() implies (#[trigger] steps[k]).order == Some((k + 1) as i64)
+        && spec_canon_step(ou(), table(), steps[k]) == Ok::<CanonStepV<u32>, Error>(canon[k]) by {
+        if k == 0 {
+        } else if k == 1 {
+        } else {
+            assert(k == 2);
+        }
+    }
+    calc_flow_of(table(), steps, canon);
+    calc_result_full_of(table(), 0, 20, steps, canon);
+    calc_result_ends_of(20, canon);
+}
+
+/// The canonical results of a run of `result(0, prop_steps(v, c))`, in full.
+proof fn calc_prop_run_one(v: Seq<Option<u32>>, c: Seq<Option<u32>>)
+    requires
+        v.len() == 3,
+        c.len() == 3,
+    ensures
+        spec_canon_run(ou(), run(seq![result(0, prop_steps(v, c))]), None) == Ok::<
+            Seq<CanonResultV<u32>>,
+            Error,
+        >(seq![canon_result_of(20, canon_prop_steps(v, c))]),
+{
+    calc_prop_example(v, c);
+    let x = canon_result_of(20, canon_prop_steps(v, c));
+    calc_run(table(), seq![result(0, prop_steps(v, c))], None, seq![x]);
+    calc_bag_one(ord_result(ou()), x);
+}
+
+/// Passes: a canonical step keeps the raw step's properties, with and without a location.
+proof fn smoke_step_props_kept()
+    ensures
+        spec_canon_step(ou(), table(), step_props(1, 30, Some(40), Some(41))) == Ok::<
+            CanonStepV<u32>,
+            Error,
+        >(CanonStepV { kinds: seq![30u32], location: None, vertex: Some(40u32), callee: Some(41u32) }),
+        spec_canon_step(
+            ou(),
+            table(),
+            RawStepV { location: Some(location(1, 0)), ..step_props(1, 30, Some(40), Some(41)) },
+        ) == Ok::<CanonStepV<u32>, Error>(
+            CanonStepV {
+                kinds: seq![30u32],
+                location: Some(CanonLocationV { physical: Some(physical(1)), logical: seq![20u32] }),
+                vertex: Some(40u32),
+                callee: Some(41u32),
+            },
+        ),
+{
+    calc_step_props(table(), 1, 30, Some(40), Some(41));
+    calc_location(1, 0, table(), 20);
+}
+
+/// Passes: steps are ordered by their properties after their kinds.
+proof fn smoke_step_props_ordered()
+    ensures
+        ord_step(ou())(canon_step_props(30, Some(40), None), canon_step_props(30, Some(41), None))
+            == Ordering::Less,
+        ord_step(ou())(canon_step_props(30, None, None), canon_step_props(30, Some(40), None))
+            != Ordering::Equal,
+        ord_step(ou())(canon_step_props(30, None, Some(40)), canon_step_props(30, None, Some(41)))
+            != Ordering::Equal,
+        ord_step(ou())(canon_step_props(30, Some(41), None), canon_step_props(31, Some(40), None))
+            == Ordering::Less,
+{
+    reveal_with_fuel(lex, 2);
+    assert(seq![30u32].drop_first() =~= Seq::<u32>::empty());
+    assert(lex(ou(), seq![30u32], seq![30u32]) == Ordering::Equal);
+    assert(lex(ou(), seq![30u32], seq![31u32]) == Ordering::Less);
+}
+
+/// Passes, endpoints: with the endpoints rule, the first and last steps' properties are compared.
+proof fn smoke_endpoint_props_compared()
+    ensures
+        spec_canon_result(ou(), table(), Some(rule()), result(0, prop_steps(seq![Some(40u32), None, None], none3())))
+            != spec_canon_result(
+            ou(),
+            table(),
+            Some(rule()),
+            result(0, prop_steps(seq![Some(41u32), None, None], none3())),
+        ),
+        spec_canon_result(ou(), table(), Some(rule()), result(0, prop_steps(none3(), seq![None, None, Some(40u32)])))
+            != spec_canon_result(
+            ou(),
+            table(),
+            Some(rule()),
+            result(0, prop_steps(none3(), seq![None, None, Some(41u32)])),
+        ),
+{
+    hide(spec_canon_result);
+    calc_prop_example(seq![Some(40u32), None, None], none3());
+    calc_prop_example(seq![Some(41u32), None, None], none3());
+    calc_prop_example(none3(), seq![None, None, Some(40u32)]);
+    calc_prop_example(none3(), seq![None, None, Some(41u32)]);
+    let (a, b) = (
+        canon_ends_of(canon_step_props(30, Some(40), None), canon_step_props(33, None, None)),
+        canon_ends_of(canon_step_props(30, Some(41), None), canon_step_props(33, None, None)),
+    );
+    assert(a.code_flows[0].thread_flows[0] != b.code_flows[0].thread_flows[0]);
+    let (a, b) = (
+        canon_ends_of(canon_step_props(30, None, None), canon_step_props(33, None, Some(40))),
+        canon_ends_of(canon_step_props(30, None, None), canon_step_props(33, None, Some(41))),
+    );
+    assert(a.code_flows[0].thread_flows[0] != b.code_flows[0].thread_flows[0]);
+}
+
+/// Passes, endpoints: with the endpoints rule an interior step's properties are not compared;
+/// without it they are.
+proof fn smoke_interior_props_ignored()
+    ensures
+        spec_canon_result(ou(), table(), Some(rule()), result(0, prop_steps(seq![None, Some(40u32), None], none3())))
+            == spec_canon_result(
+            ou(),
+            table(),
+            Some(rule()),
+            result(0, prop_steps(seq![None, Some(41u32), None], none3())),
+        ),
+        spec_canon_result(ou(), table(), None, result(0, prop_steps(seq![None, Some(40u32), None], none3())))
+            != spec_canon_result(
+            ou(),
+            table(),
+            None,
+            result(0, prop_steps(seq![None, Some(41u32), None], none3())),
+        ),
+{
+    hide(spec_canon_result);
+    let (v, w) = (seq![None, Some(40u32), None], seq![None, Some(41u32), None]);
+    calc_prop_example(v, none3());
+    calc_prop_example(w, none3());
+    let (a, b) = (canon_result_of(20, canon_prop_steps(v, none3())), canon_result_of(20, canon_prop_steps(w, none3())));
+    let (sa, sb) = (canon_prop_steps(v, none3()), canon_prop_steps(w, none3()));
+    assert(sa[1] != sb[1]);
+    assert(CanonThreadFlowV::Steps(sa) != CanonThreadFlowV::Steps(sb));
+    assert(a.code_flows[0].thread_flows[0] != b.code_flows[0].thread_flows[0]);
+}
+
+/// Fails: the step relations hold only of steps with equal properties, and the canonical
+/// results tell apart two runs that differ only in a step's `callee`, so no rewrite that the
+/// invariance theorem allows may change a property.
+proof fn smoke_step_relations_need_props()
+    ensures
+        !step_permuted(step_props(1, 30, Some(40), None), step_props(1, 30, Some(41), None)),
+        !step_renumbered(seq![0int, 1], 2, step_props(1, 30, Some(40), None), step_props(1, 30, Some(41), None)),
+        spec_canon_run(ou(), run(seq![result(0, prop_steps(none3(), seq![None, Some(40u32), None]))]), None)
+            != spec_canon_run(
+            ou(),
+            run(seq![result(0, prop_steps(none3(), seq![None, Some(41u32), None]))]),
+            None,
+        ),
+{
+    hide(spec_canon_run);
+    hide(spec_canon_result);
+    let (c, d) = (seq![None, Some(40u32), None], seq![None, Some(41u32), None]);
+    calc_prop_run_one(none3(), c);
+    calc_prop_run_one(none3(), d);
+    let (x, y) = (canon_result_of(20, canon_prop_steps(none3(), c)), canon_result_of(20, canon_prop_steps(none3(), d)));
+    let (sx, sy) = (canon_prop_steps(none3(), c), canon_prop_steps(none3(), d));
+    assert(sx[1] != sy[1]);
+    assert(CanonThreadFlowV::Steps(sx) != CanonThreadFlowV::Steps(sy));
+    assert(x.code_flows[0].thread_flows[0] != y.code_flows[0].thread_flows[0]);
+    assert(seq![x][0] != seq![y][0]);
+}
+
+/// A result of one-kind steps with no location is a permutation of itself.
+proof fn calc_result_permuted_self_of(steps: Seq<RawStepV<u32>>)
+    requires
+        forall|k: int| 0 <= k < steps.len() ==> (#[trigger] steps[k]).kinds.len() == 1 && steps[k].location is None,
+    ensures
+        result_permuted(result(0, steps), result(0, steps)),
+{
+    let r = result(0, steps);
+    let l = r.locations[0];
+    calc_bag_rel_one(l.logical[0], l.logical[0], same());
+    calc_bag_rel_one(l, l, |a: RawLocationV<u32>, b: RawLocationV<u32>| location_permuted(a, b));
+    let f = r.code_flows[0].thread_flows[0];
+    assert forall|k: int| 0 <= k < f.steps.len() implies step_permuted(
+        #[trigger] f.steps[k],
+        f.steps[k],
+    ) by {
+        let s = f.steps[k];
+        assert(s.kinds.len() == 1);
+        assert(s.kinds =~= seq![s.kinds[0]]);
+        calc_bag_rel_one(s.kinds[0], s.kinds[0], same());
+    }
+    calc_bag_rel_one(f, f, |a: RawThreadFlowV<u32>, b: RawThreadFlowV<u32>| thread_flow_permuted(a, b));
+    let c = r.code_flows[0];
+    calc_bag_rel_one(c, c, |a: RawCodeFlowV<u32>, b: RawCodeFlowV<u32>| code_flow_permuted(a, b));
+}
+
+/// Not vacuous: `smoke_permuted_bags_holds` with a `taintVertex` and a `callee` on the steps.
+proof fn smoke_permuted_bags_holds_props()
+    ensures
+        permuted_bags(
+            seq![run(seq![
+                result(0, prop_steps(seq![Some(40u32), Some(41), Some(40)], seq![Some(41u32), None, Some(40)])),
+                result(0, prop_steps(seq![Some(41u32), Some(40), None], seq![Some(40u32), Some(41), Some(41)])),
+            ])],
+            seq![run(seq![
+                result(0, prop_steps(seq![Some(41u32), Some(40), None], seq![Some(40u32), Some(41), Some(41)])),
+                result(0, prop_steps(seq![Some(40u32), Some(41), Some(40)], seq![Some(41u32), None, Some(40)])),
+            ])],
+        ),
+{
+    let s1 = prop_steps(seq![Some(40u32), Some(41), Some(40)], seq![Some(41u32), None, Some(40)]);
+    let s2 = prop_steps(seq![Some(41u32), Some(40), None], seq![Some(40u32), Some(41), Some(41)]);
+    let (r1, r2) = (result(0, s1), result(0, s2));
+    calc_result_permuted_self_of(s1);
+    calc_result_permuted_self_of(s2);
+    let x = run(seq![r1, r2]);
+    let y = run(seq![r2, r1]);
+    calc_bag_rel_swap(r1, r2, |a: RawResultV<u32>, b: RawResultV<u32>| result_permuted(a, b));
+    calc_bag_rel_one(x, y, |a: RawRunV<u32>, b: RawRunV<u32>| run_permuted(a, b));
+}
+
+/// Not vacuous: `smoke_renumbered_holds` with a `taintVertex` and a `callee` on the steps.
+proof fn smoke_renumbered_holds_props()
+    ensures
+        renumbered(
+            run(seq![result(0, prop_steps(seq![Some(40u32), Some(41), Some(40)], seq![Some(41u32), None, Some(40)]))]),
+            RawRunV {
+                logical: table_swapped(),
+                results: seq![
+                    result(1, prop_steps(seq![Some(40u32), Some(41), Some(40)], seq![Some(41u32), None, Some(40)])),
+                ],
+            },
+        ),
+{
+    let pi = seq![1int, 0];
+    let steps = prop_steps(seq![Some(40u32), Some(41), Some(40)], seq![Some(41u32), None, Some(40)]);
+    let x = run(seq![result(0, steps)]);
+    let y = RawRunV { logical: table_swapped(), results: seq![result(1, steps)] };
+    let (rx, ry) = (x.results[0], y.results[0]);
+    let f = rx.code_flows[0].thread_flows[0];
+    assert forall|k: int| 0 <= k < f.steps.len() implies step_renumbered(
+        pi,
+        2,
+        #[trigger] f.steps[k],
+        ry.code_flows[0].thread_flows[0].steps[k],
+    ) by {}
+    assert(thread_flow_renumbered(pi, 2, f, ry.code_flows[0].thread_flows[0]));
+    assert(code_flow_renumbered(pi, 2, rx.code_flows[0], ry.code_flows[0]));
+    assert(location_renumbered(pi, 2, rx.locations[0], ry.locations[0]));
+    assert(result_renumbered(pi, 2, rx, ry));
+    assert(run_renumbered(pi, x, y));
 }
 
 } // verus!

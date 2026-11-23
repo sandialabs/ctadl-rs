@@ -150,6 +150,8 @@ fn step(s: &sarif::ThreadFlowLocation, atoms: &mut Atoms) -> Result<RawStep<u32>
             .as_ref()
             .map(|l| location(l, atoms))
             .transpose()?,
+        vertex: None,
+        callee: None,
     })
 }
 
@@ -564,6 +566,8 @@ mod tests {
                                     order: Some(1),
                                     kinds: vec![a("taint")],
                                     location: Some(logical_only(0)),
+                                    vertex: None,
+                                    callee: None,
                                 },
                                 RawStep {
                                     order: Some(2),
@@ -581,11 +585,15 @@ mod tests {
                                         }),
                                         logical: vec![Index(1)],
                                     }),
+                                    vertex: None,
+                                    callee: None,
                                 },
                                 RawStep {
                                     order: Some(3),
                                     kinds: vec![],
                                     location: None,
+                                    vertex: None,
+                                    callee: None,
                                 },
                             ],
                         }],

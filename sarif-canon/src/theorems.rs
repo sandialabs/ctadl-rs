@@ -87,6 +87,8 @@ pub open spec fn step_permuted<A>(x: RawStepV<A>, y: RawStepV<A>) -> bool {
     &&& x.order == y.order
     &&& atoms_permuted(x.kinds, y.kinds)
     &&& opt_rel(x.location, y.location, |a: RawLocationV<A>, b: RawLocationV<A>| location_permuted(a, b))
+    &&& x.vertex == y.vertex
+    &&& x.callee == y.callee
 }
 
 pub open spec fn thread_flow_permuted<A>(x: RawThreadFlowV<A>, y: RawThreadFlowV<A>) -> bool {
@@ -156,6 +158,8 @@ pub open spec fn step_renumbered<A>(pi: Seq<int>, n: nat, x: RawStepV<A>, y: Raw
         y.location,
         |a: RawLocationV<A>, b: RawLocationV<A>| location_renumbered(pi, n, a, b),
     )
+    &&& x.vertex == y.vertex
+    &&& x.callee == y.callee
 }
 
 pub open spec fn thread_flow_renumbered<A>(

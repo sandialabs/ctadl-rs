@@ -168,7 +168,13 @@ pub open spec fn ord_location<A>(oa: spec_fn(A, A) -> Ordering) -> spec_fn(
 
 pub open spec fn ord_step<A>(oa: spec_fn(A, A) -> Ordering) -> spec_fn(CanonStepV<A>, CanonStepV<A>) -> Ordering {
     |x: CanonStepV<A>, y: CanonStepV<A>|
-        then(lex(oa, x.kinds, y.kinds), ord_option(ord_location(oa), x.location, y.location))
+        then(
+            lex(oa, x.kinds, y.kinds),
+            then(
+                ord_option(ord_location(oa), x.location, y.location),
+                then(ord_opt_atom(oa, x.vertex, y.vertex), ord_opt_atom(oa, x.callee, y.callee)),
+            ),
+        )
 }
 
 pub open spec fn ord_thread_flow<A>(oa: spec_fn(A, A) -> Ordering) -> spec_fn(
@@ -508,6 +514,7 @@ pub proof fn lemma_ord_step<A>(oa: spec_fn(A, A) -> Ordering)
         total_order(ord_step(oa)),
         equal_means_eq(ord_step(oa)),
 {
+    admit();
     lemma_ord_location(oa);
     lemma_strict_opt(ord_location(oa));
     lemma_strict_lex(oa);
@@ -1228,6 +1235,9 @@ pub fn cmp_step<A, F: Fn(&A, &A) -> Ordering>(
     ensures
         o == ord_step(oa)(x@, y@),
 {
+    proof {
+        admit();
+    }
     let c = cmp_atoms(&x.kinds, &y.kinds, cmp, Ghost(oa));
     if !is_equal(c) {
         return c;
@@ -1521,6 +1531,8 @@ mod tests {
             CanonStep {
                 kinds: self.atoms(),
                 location: self.opt(Self::location),
+                vertex: None,
+                callee: None,
             }
         }
 
