@@ -144,6 +144,12 @@ computing the definitions; none may call a lemma admitted in this phase):
 `spec_canon_step`, `step_permuted`, `step_renumbered`), the list of admitted bodies and the
 new smoke tests against R1, R2 and R14 before Wave 2 starts.
 
+**As built** (`6f3dc5968`). Admitted: `lemma_ord_step` (`order.rs:517`) and `cmp_step`, whose
+only change is a `proof { admit(); }` at the top (`order.rs:1239`); its comparison code is
+untouched. `smoke.rs` gains `calc_*` helpers for steps with properties beside the existing
+ones, and `smoke_step_props_kept` also checks a step with a location. Verus: `sarif-canon`
+224 verified (was 210), 0 errors.
+
 ## Phase 2: comparison and proofs in `sarif-canon` (R1, R2, R14; D1)
 
 Depends on: 1.
