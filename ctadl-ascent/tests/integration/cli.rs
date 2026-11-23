@@ -1557,15 +1557,15 @@ fn diff_query_file() -> &'static PathBuf {
     })
 }
 
-/// A copy of the `diff-query` SARIF with its first result removed, in a temporary directory.
-fn sarif_with_a_result_removed() -> (tempfile::TempDir, PathBuf) {
-    let mut doc: serde_json::Value =
+/// A copy of the `diff-query` SARIF with `edit` applied, in a temporary directory.
+fn sarif_edited(edit: impl FnOnce(&mut serde_json::Value)) -> (tempfile::TempDir, PathBuf) {
+    let base: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(diff_query_file()).unwrap()).unwrap();
-    let results = doc["runs"][0]["results"].as_array_mut().unwrap();
-    assert!(results.len() > 1, "the fixture has results to remove");
-    results.remove(0);
+    let mut doc = base.clone();
+    edit(&mut doc);
+    assert_ne!(doc, base, "the edit changed nothing");
     let tmp = tempdir().unwrap();
-    let path = tmp.path().join("removed.sarif");
+    let path = tmp.path().join("edited.sarif");
     std::fs::write(&path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
     (tmp, path)
 }
@@ -1612,13 +1612,33 @@ fn diff_query_malformed_exit_2() {
     }
 }
 
-/// `--limit 0` and `--json` change what is printed, never the exit code.
+/// `--limit 0` and `--json` change what is printed, never the exit code, whether results or
+/// notifications differ.
 #[test]
 fn diff_query_exit_independent_of_limit_and_json() {
-    let (_tmp, removed) = sarif_with_a_result_removed();
+    let (_tmp_removed, removed) = sarif_edited(|doc| {
+        let results = doc["runs"][0]["results"].as_array_mut().unwrap();
+        assert!(results.len() > 1, "the fixture has results to remove");
+        results.remove(0);
+    });
+    let (_tmp_level, level) = sarif_edited(|doc| {
+        let level = doc
+            .pointer_mut("/runs/0/invocations/0/toolExecutionNotifications/0/level")
+            .expect("the fixture has a notification with a level");
+        *level = serde_json::json!(if *level == "warning" {
+            "note"
+        } else {
+            "warning"
+        });
+    });
     let sarif = diff_query_file().to_str().unwrap();
     let removed = removed.to_str().unwrap();
-    for (b, expected, first) in [(sarif, 0, "IDENTICAL"), (removed, 1, "DIFFERENT")] {
+    let level = level.to_str().unwrap();
+    for (b, expected, first) in [
+        (sarif, 0, "IDENTICAL"),
+        (removed, 1, "DIFFERENT"),
+        (level, 1, "DIFFERENT"),
+    ] {
         for flags in [
             &[][..],
             &["--limit", "0"],
