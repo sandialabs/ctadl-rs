@@ -218,8 +218,11 @@ front of them is the one that was analyzed.
 
 ### 4.5 Output
 
-One SARIF run, one rule per kind of result: `C0001` source-to-sink paths (a code flow with
-intra-/interprocedural steps), `C0002` tainted instructions, `C0003`/`C0004` source and sink
+One SARIF run, one rule per kind of result: `C0001` source-to-sink paths (a code flow with a
+step at each call the path passes through; each step carries its tainted vertex as
+`taintVertex`, and each step but the source's and the sink's carries either `callee`, the
+function entered or returned from, or `summarized`, where the path crosses the call by a
+summary or a model), `C0002` tainted instructions, `C0003`/`C0004` source and sink
 vertices, `C0005` tainted vertices, `C0006` functions holding both source- and sink-tainted
 data (an "almost" path), `C0007` external functions that absorb taint. `CTADL0xxx`
 notifications report on the run itself. `--sarif-profile` (`human`, `agent`, `machine`,
@@ -258,9 +261,10 @@ inspectable with DuckDB; see [debugging.md](debugging.md)).
   instruction and function ids, and changed message text (notifications' included) report no
   difference; a deleted or duplicated result, two swapped steps of a flow, a changed line, a
   notification's changed level or property, and a changed `executionSuccessful` or `exitCode`
-  are reported as exactly that. With step properties added to that output, renumbered
-  instruction ids in them report no difference and a changed `taintVertex` or `callee` is
-  reported, at an interior step only without `--endpoints-only`.
+  are reported as exactly that. In the step properties `ctadl query` writes, renumbered
+  instruction and function ids report no difference, also at a call site with several
+  callees, and a changed `taintVertex` or `callee` or a removed `summarized` is reported, at
+  an interior step only without `--endpoints-only`.
 
 ## 6. Known limitations
 
