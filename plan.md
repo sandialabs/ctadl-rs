@@ -368,6 +368,37 @@ case; the comparison with the baseline SARIF;
 `grep -rn 'cli::query(' ctadl-ascent/tests/integration` finds `common.rs` and
 `diff_query.rs:50` only.
 
+**As built.**
+- The third arm of the edge-kind `match` cannot be reached, so the work did not stop there.
+  - Only call and return edges have a site.
+  - The edge list is sorted by kind, so an intra edge with the same two ends comes first and
+    is overwritten.
+  - A global edge has a global at one end, and a call edge never shares both ends with a
+    return edge.
+  - The arm is `unreachable!`, with that reasoning in a comment. Neither the tests nor the
+    regression run reach it.
+- The step value is `FlowStep`:
+  - its vertex;
+  - a `StepCallee`, which is `Endpoint`, `Named` or `Summarized`;
+  - the function its message names.
+
+  `vertex_text` is the one vertex formatter, also used for the debug profile's
+  `taintVertices`.
+- A `call-arg` step is classified by `edge_by_edge` at `(dst, next)`. If a call edge and an
+  intra edge joined the same pair (only in recursion), the step would count as a call step.
+  That follows the same edge-list order as the first item.
+- `check_step_properties` is also called from `xtask/src/android_icc.rs`, which calls
+  `codeflow_connects_source_and_sink` too. In each pass criterion it runs before a negative
+  case returns.
+- Regression: same counts, and every step of every case passes the check. The steps are:
+  - 15 call steps with `callee`;
+  - 219 summarized steps;
+  - 21 return steps;
+  - 296 source steps and 296 sink steps.
+- Against the baseline, only phase 3's four files differ. No regression case has a call step
+  at a site with several callees, so phase 5 changed no message there.
+  `step_props.rs` covers that case (`funcptr_two_targets.tnt`).
+
 ## Phase 6: the metamorphic tests run on real properties (R15, R17, R19, D4)
 
 Depends on: 4, 5.
