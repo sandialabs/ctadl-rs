@@ -183,6 +183,24 @@ properties are not written yet.
 `cargo test --workspace`; `cargo xtask regression`;
 `grep -n 'sourceCallee\|sinkCallee' ctadl-ascent/src` finds nothing.
 
+**As built.**
+- Callees with one name are ordered by id before they are deduplicated, so which id is
+  kept does not depend on the order of the call list. The name written is the same either
+  way.
+- `sourceFunctions` and `sinkFunctions` still leave out a callee with no name, as they did,
+  instead of writing `func#<id>`. That keeps the output at a site with one callee byte for
+  byte the same. An unnamed function only sorts as `func#<id>`.
+- `endpoint_callees` returns a borrowed slice. One more test,
+  `endpoint_callees_fall_back_to_infunc`, checks that an endpoint with no call site, or at a
+  site with no callee, is named by `infunc`.
+- Regression: same counts. Against the baseline SARIF, with the two removed properties
+  deleted, four files differ:
+  - `Jvm_MethodCallFlow`, `MethodCallFlow`, `Jvm_ClassIdMergedFlow`, and
+    `Jvm_ClassIdMergedTryFlow` (an xfail case).
+  - In each, only the message of an interior `call-arg` step at a virtual call with two
+    callees changed. It now names the callee first by name: `LMyImpl;->process` and
+    `...$Fn;->apply`.
+
 ## Phase 4: `diff-query` reads `summarized` (R12, R13, R14, D3)
 
 Depends on: 1.
