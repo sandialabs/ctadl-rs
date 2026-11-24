@@ -132,6 +132,8 @@ pub struct RawStep<A> {
     pub vertex: Option<A>,
     /// `properties.callee`.
     pub callee: Option<A>,
+    /// `properties.summarized`.
+    pub summarized: Option<bool>,
 }
 
 /// `threadFlow`.
@@ -184,6 +186,7 @@ pub struct CanonStep<A> {
     pub location: Option<CanonLocation<A>>,
     pub vertex: Option<A>,
     pub callee: Option<A>,
+    pub summarized: Option<bool>,
 }
 
 /// A thread flow: all its steps in order, or, when only endpoints are compared, its first and
@@ -265,6 +268,7 @@ pub struct RawStepV<A> {
     pub location: Option<RawLocationV<A>>,
     pub vertex: Option<A>,
     pub callee: Option<A>,
+    pub summarized: Option<bool>,
 }
 
 pub struct RawThreadFlowV<A> {
@@ -294,6 +298,7 @@ pub struct CanonStepV<A> {
     pub location: Option<CanonLocationV<A>>,
     pub vertex: Option<A>,
     pub callee: Option<A>,
+    pub summarized: Option<bool>,
 }
 
 pub enum CanonThreadFlowV<A> {
@@ -374,6 +379,7 @@ impl<A> RawStep<A> {
             },
             vertex: self.vertex,
             callee: self.callee,
+            summarized: self.summarized,
         }
     }
 }
@@ -419,6 +425,7 @@ impl<A> CanonStep<A> {
             },
             vertex: self.vertex,
             callee: self.callee,
+            summarized: self.summarized,
         }
     }
 }

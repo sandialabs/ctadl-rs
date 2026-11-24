@@ -227,6 +227,7 @@ fn step(s: &sarif::ThreadFlowLocation, atoms: &mut Atoms) -> Result<RawStep<u32>
             .transpose()?,
         vertex: step_prop(s, "taintVertex", atoms, without_call_site)?,
         callee: step_prop(s, "callee", atoms, as_is)?,
+        summarized: None,
     })
 }
 
@@ -723,6 +724,7 @@ mod tests {
                                     location: Some(logical_only(0)),
                                     vertex: Some(a("call-arg(_, 0).f")),
                                     callee: Some(a("snk")),
+                                    summarized: None,
                                 },
                                 RawStep {
                                     order: Some(2),
@@ -742,6 +744,7 @@ mod tests {
                                     }),
                                     vertex: None,
                                     callee: Some(a("snk2")),
+                                    summarized: None,
                                 },
                                 RawStep {
                                     order: Some(3),
@@ -749,6 +752,7 @@ mod tests {
                                     location: None,
                                     vertex: None,
                                     callee: None,
+                                    summarized: None,
                                 },
                             ],
                         }],

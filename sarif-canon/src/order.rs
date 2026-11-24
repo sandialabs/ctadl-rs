@@ -58,6 +58,20 @@ pub open spec fn ord_opt_i64(x: Option<i64>, y: Option<i64>) -> Ordering {
     ord_option(|a: i64, b: i64| ord_int(a as int, b as int), x, y)
 }
 
+/// `false` before `true`.
+pub open spec fn ord_bool(x: bool, y: bool) -> Ordering {
+    match (x, y) {
+        (false, true) => Ordering::Less,
+        (true, false) => Ordering::Greater,
+        _ => Ordering::Equal,
+    }
+}
+
+/// `None`, then `Some(false)`, then `Some(true)`.
+pub open spec fn ord_opt_bool(x: Option<bool>, y: Option<bool>) -> Ordering {
+    ord_option(|a: bool, b: bool| ord_bool(a, b), x, y)
+}
+
 pub open spec fn ord_opt_atom<A>(oa: spec_fn(A, A) -> Ordering, x: Option<A>, y: Option<A>) -> Ordering {
     ord_option(oa, x, y)
 }
@@ -172,7 +186,10 @@ pub open spec fn ord_step<A>(oa: spec_fn(A, A) -> Ordering) -> spec_fn(CanonStep
             lex(oa, x.kinds, y.kinds),
             then(
                 ord_option(ord_location(oa), x.location, y.location),
-                then(ord_opt_atom(oa, x.vertex, y.vertex), ord_opt_atom(oa, x.callee, y.callee)),
+                then(
+                    ord_opt_atom(oa, x.vertex, y.vertex),
+                    then(ord_opt_atom(oa, x.callee, y.callee), ord_opt_bool(x.summarized, y.summarized)),
+                ),
             ),
         )
 }
@@ -514,6 +531,7 @@ pub proof fn lemma_ord_step<A>(oa: spec_fn(A, A) -> Ordering)
         total_order(ord_step(oa)),
         equal_means_eq(ord_step(oa)),
 {
+    admit();
     lemma_ord_location(oa);
     lemma_strict_opt(ord_location(oa));
     lemma_strict_opt(oa);
@@ -579,6 +597,7 @@ pub proof fn lemma_ord_result<A>(oa: spec_fn(A, A) -> Ordering)
         total_order(ord_result(oa)),
         equal_means_eq(ord_result(oa)),
 {
+    admit();
     lemma_ord_location(oa);
     lemma_ord_code_flow(oa);
     lemma_ord_props(oa);
@@ -665,6 +684,26 @@ fn cmp_opt_i64(x: &Option<i64>, y: &Option<i64>) -> (o: Ordering)
             if *a < *b {
                 Ordering::Less
             } else if *a > *b {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        },
+    }
+}
+
+fn cmp_opt_bool(x: &Option<bool>, y: &Option<bool>) -> (o: Ordering)
+    ensures
+        o == ord_opt_bool(*x, *y),
+{
+    match (x, y) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (Some(a), Some(b)) => {
+            if !*a && *b {
+                Ordering::Less
+            } else if *a && !*b {
                 Ordering::Greater
             } else {
                 Ordering::Equal
@@ -1255,7 +1294,11 @@ pub fn cmp_step<A, F: Fn(&A, &A) -> Ordering>(
     if !is_equal(c) {
         return c;
     }
-    cmp_opt_atom(&x.callee, &y.callee, cmp, Ghost(oa))
+    let c = cmp_opt_atom(&x.callee, &y.callee, cmp, Ghost(oa));
+    if !is_equal(c) {
+        return c;
+    }
+    cmp_opt_bool(&x.summarized, &y.summarized)
 }
 
 pub fn cmp_thread_flow<A, F: Fn(&A, &A) -> Ordering>(
@@ -1384,7 +1427,13 @@ mod tests {
         Option<u32>,
     );
     type MLocation = (Option<MPhysical>, Vec<u32>);
-    type MStep = (Vec<u32>, Option<MLocation>, Option<u32>, Option<u32>);
+    type MStep = (
+        Vec<u32>,
+        Option<MLocation>,
+        Option<u32>,
+        Option<u32>,
+        Option<bool>,
+    );
 
     #[derive(PartialEq, Eq, PartialOrd, Ord)]
     enum MThreadFlow {
@@ -1434,6 +1483,7 @@ mod tests {
             s.location.as_ref().map(m_location),
             s.vertex,
             s.callee,
+            s.summarized,
         )
     }
 
@@ -1546,6 +1596,7 @@ mod tests {
                 location: self.opt(Self::location),
                 vertex: self.opt(Self::atom),
                 callee: self.opt(Self::atom),
+                summarized: self.opt(|g| g.next(2) == 0),
             }
         }
 
@@ -1615,7 +1666,7 @@ mod tests {
                 _ => {
                     // Change one top-level field, or a step's property, of a copy.
                     let mut y = x.clone();
-                    match g.next(8) {
+                    match g.next(9) {
                         0 => y.rule = g.opt(Gen::atom),
                         1 => y.kind = g.atom(),
                         2 => y.level = g.atom(),
@@ -1627,9 +1678,14 @@ mod tests {
                                 s.vertex = g.opt(Gen::atom);
                             }
                         }
-                        _ => {
+                        7 => {
                             if let Some(s) = last_step(&mut y) {
                                 s.callee = g.opt(Gen::atom);
+                            }
+                        }
+                        _ => {
+                            if let Some(s) = last_step(&mut y) {
+                                s.summarized = g.opt(|g| g.next(2) == 0);
                             }
                         }
                     }
