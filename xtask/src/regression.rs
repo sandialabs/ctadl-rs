@@ -1470,10 +1470,12 @@ pub(crate) fn ctadl_command<S: AsRef<OsStr>>(args: &[S]) -> Result<Command> {
 }
 
 /// `<ctadl> <args>`. A `ctadl index` is also passed the suite's `--mem2reg` policy, if one was
-/// given. Every case spawns `ctadl` through here, so none misses the policy.
+/// given. Every case spawns `ctadl` through here, so none misses the policy. An inherited
+/// `CTADL_STORE` is dropped: cases pick their store with `XDG_STATE_HOME` or `--store`, and the
+/// variable would override the former.
 pub(crate) fn ctadl_command_with<S: AsRef<OsStr>>(ctadl: &Path, args: &[S]) -> Command {
     let mut cmd = Command::new(ctadl);
-    cmd.args(args);
+    cmd.args(args).env_remove("CTADL_STORE");
     if let Some(Some(policy)) = MEM2REG.get()
         && args.first().is_some_and(|a| a.as_ref() == "index")
     {

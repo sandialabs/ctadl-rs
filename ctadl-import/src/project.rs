@@ -2,7 +2,7 @@
 
 # CTADL store
 
-CTADL state is stored into `XDG_STATE_HOME/ctadl`. This can be overriden on the command line by setting the `XDG_STATE_HOME` variable (or calling [`init_store_path`]). We call this directory the store. There are two important store paths:
+CTADL state is stored into `XDG_STATE_HOME/ctadl`. This can be overridden by setting the `XDG_STATE_HOME` variable, or by calling [`init_store_path`] (which the `ctadl` CLI does for `--store` or the `CTADL_STORE` variable). We call this directory the store. There are two important store paths:
 
 - `imports`: Where individual artifacts are stored. Each subdirectory corresponds to an artifact that was imported into CTADL. Each import is a directory and contains an `import_config.json` that stores, at least, the original path to the thing imported.
 
