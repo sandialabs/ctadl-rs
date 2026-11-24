@@ -499,6 +499,18 @@ finds no sentence about step properties;
 `grep -rnE '\b(R|D|P)[0-9]+\b' docs/debugging.md ctadl-ascent/src/main.rs ctadl-ascent/src/query_engine/formatter.rs ctadl-query-diff/src sarif-canon/src/types.rs`
 finds no citation of this plan or the spec.
 
+**As built.**
+- The worked `diff-query` example in `docs/debugging.md` was regenerated. It was run with
+  `ctadl go` and `ctadl diff-query` on `xfer.c` and its version with the extra sink, and its
+  `C0001` row now shows each step's `taintVertex`.
+- `sarif-canon/src/types.rs` and `lib.rs` still read true and are unchanged.
+- Acceptance, on the documents' commit:
+  - regression: 256 passed, 5 xfail of 261;
+  - Verus: 8, 31, 30, 232 verified, with no admits;
+  - the SARIF comparison: 744 files the same, and the 4 that differ are phase 3's;
+  - `sarif-canon` since the phase 1 commit changes only proofs and helper lemmas;
+  - the names that must be gone are gone.
+
 ## Files that change
 
 | File | Change | Phase |
