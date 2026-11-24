@@ -134,10 +134,13 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
 - R18. **What each step says is tested.** Tests check the properties of each kind of step: a
   call step at a site with two callees, of which the path enters one; a return step; a
   summarized step, both between two arguments and into a global; a source or sink step at a
-  site with two callees, whose result's `sourceFunctions` or `sinkFunctions` holds both. On
-  every flow the tests query, each step but the source and sink steps has `callee` or
-  `summarized`.
-- R19. **Documents.** `docs/debugging.md` (`:259`), the `diff-query` help text
+  site with two callees, whose result's `sourceFunctions` or `sinkFunctions` holds both.
+- R19. **Every flow is checked.** Every flow the regression suite queries, and every flow an
+  integration test queries, is checked step by step: the step has a `taintVertex`, the
+  vertex its message names; a source or sink step has neither `callee` nor `summarized`;
+  every other step has exactly one of them. A step that breaks this fails the case or the
+  test.
+- R20. **Documents.** `docs/debugging.md` (`:259`), the `diff-query` help text
   (`ctadl-ascent/src/main.rs:93`) and `docs/spec.md` (§5, `:261`) no longer say the
   properties are not written, and name `summarized` beside `callee`. `docs/spec.md` §4.5
   says a step carries them. `docs/debugging.md` says which step has which property, what
@@ -148,7 +151,13 @@ how `ctadl diff-query` reads it. It must stay consistent with `docs/spec.md` (F9
 
 ### D1. What a step says (R1–R5, R7, R8)
 
-One small value describes a step before it is written: its vertex (`FlowVariable`, `Path`),
+A step is a point on the path, not an edge of it: one vertex at one call site, the vertex
+its message names. Three of the four writers start from a vertex (Background). The one that
+starts from a call or return edge writes the edge's destination. The edge next to that
+vertex is read only to say something about the callee: the edge that leaves it for a call
+step, the edge that arrives at it for a return step.
+
+One small value describes a step before it is written: that vertex (`FlowVariable`, `Path`),
 what it says about its callee, and the function its message names. `push_site_step`
 (`formatter.rs:2801`) takes it in place of the finished message string, and renders both the
 message and the property bag from it. The message and the properties then cannot disagree
@@ -215,17 +224,32 @@ they ask of `callee`.
 `callee`. `render.rs:99` prints it under `properties`. A file written before this change has
 neither property on a step, and compares as it did (R14).
 
-### D4. Tests (R15, R17, R18)
+### D4. Tests (R15, R17–R19)
 
 `with_step_props` and the "with step properties" bases (`diff_query.rs:199`, `:224`) go: the
 real output is the base. `renumbered_ids` (`diff_query.rs:757`) then covers R15 for
-`ties.c`. A second fixture has a call through a function pointer or a virtual call that
+`ties.c`. The tests of what each step says (R18) use the fixtures there are where one has the
+shape: `funcptr_two_targets.tnt` for a call step at a site with two callees,
+`callsite_paths.tnt` for a return step, `ex4.tnt` for a summarized step between two
+arguments. None is edited. Two shapes have no fixture and get one each: a summarized step
+into a global, and a sink at a site with two callees.
+
+That second new fixture has a call through a function pointer or a virtual call that
 resolves to two functions, with a flow that enters one of them and a source or sink at such
 a call; it is indexed twice, with the callees' ids in opposite orders. It covers R15 and R18
 for several callees.
 
 The regression suite's readers of message text (`xtask/src/assertions.rs:204`, `:223`) do not
 change; the sink function they read is the site's first callee by name.
+
+The check of every flow (R19) is one function over a SARIF file, which tells a source or
+sink step by its message's first word, as those readers do. The regression suite has it
+beside them and calls it in every pass criterion, where it calls
+`codeflow_connects_source_and_sink` (`xtask/src/assertions.rs:164`). The integration tests
+have a copy in `ctadl-ascent/tests/integration/common.rs`, behind a `query` that calls
+`cli::query` and then checks the file it wrote; every test queries through it. Each copy
+has a test that it rejects a step with both properties, with neither, and with a
+`taintVertex` its message does not name: a check that cannot fail checks nothing.
 
 ## Concerns
 
