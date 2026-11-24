@@ -1198,7 +1198,9 @@ fn changed_step_property() {
         for_each_step(&mut doc, &mut |step| {
             if let Some(props) = step.get_mut("properties").and_then(Value::as_object_mut) {
                 for value in props.values_mut() {
-                    *value = json!(shift_call_args(value.as_str().unwrap(), 7));
+                    if let Some(s) = value.as_str() {
+                        *value = json!(shift_call_args(s, 7));
+                    }
                 }
             }
         });

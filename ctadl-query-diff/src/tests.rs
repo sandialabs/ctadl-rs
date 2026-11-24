@@ -269,8 +269,13 @@ fn small_diff_text() {
             ],
         )]
     };
-    // The differing step has both properties; the others have none.
-    let props = [None, Some(step_props(12, "snk")), None];
+    // The differing step has `taintVertex` and `callee`, the last step only `summarized`, and
+    // the first none.
+    let props = [
+        None,
+        Some(step_props(12, "snk")),
+        Some(json!({"summarized": true})),
+    ];
     let a = invoked(
         doc(vec![flow_with(&[3, 5, 7], &props), source(3)]),
         invocations("warning", 0),
@@ -288,12 +293,13 @@ fn small_diff_text() {
         )
     };
     let mid_props = r#","properties":{"taintVertex":"call-arg(_, 0)","callee":"snk"}"#;
+    let last_props = r#","properties":{"summarized":true}"#;
     let result = |mid: i64| {
         format!(
             r#"{{"ruleId":"C0001.tainted-path","kind":"fail","level":"error","locations":[{{"physicalLocation":{{"artifactLocation":{{"uriBaseId":"SRC0","uri":"a.c"}},"region":{{"startLine":3}}}},"logicalLocations":["main"]}}],"codeFlows":[{{"threadFlows":[{{"locations":[{},{},{}]}}]}}],"properties":{{"taintLabels":["L"],"sourceFunctions":["src"],"sinkFunctions":["snk"]}}}}"#,
             step(3, ""),
             step(mid, mid_props),
-            step(7, "")
+            step(7, last_props)
         )
     };
     let note = |level: &str| {
@@ -618,6 +624,97 @@ fn step_properties_compared() {
     }
 }
 
+/// `summarized` compares equal only to the same boolean: `true` differs from absent and from
+/// `false`.
+#[test]
+fn summarized_compared() {
+    let f = Files::new();
+    let with = |props: Option<Value>| doc(vec![flow_with(&[3, 5, 7], &[None, props])]);
+    let summarized = || json!({"taintVertex": "call-arg(12, 0)", "summarized": true});
+    let a = f.write("a.sarif", &with(Some(summarized())));
+    let same = f.write("same.sarif", &with(Some(summarized())));
+    assert!(diff(&a, &same).identical());
+    for (name, b) in [
+        (
+            "absent.sarif",
+            with(Some(json!({"taintVertex": "call-arg(12, 0)"}))),
+        ),
+        (
+            "false.sarif",
+            with(Some(
+                json!({"taintVertex": "call-arg(12, 0)", "summarized": false}),
+            )),
+        ),
+    ] {
+        let b = f.write(name, &b);
+        let r = diff(&a, &b);
+        assert!(!r.identical(), "{name}");
+        assert_eq!(counts(&r), (vec![(1, 0)], vec![(0, 1)]), "{name}");
+    }
+}
+
+/// Under `--endpoints-only`, a step's `callee` and `summarized` are compared on the first and
+/// the last step only.
+#[test]
+fn endpoints_only_reads_first_and_last() {
+    let f = Files::new();
+    let ends = Options {
+        endpoints_only: true,
+        ..Options::default()
+    };
+    let vertex = |k: u32| format!("call-arg({k}, 0)");
+    let called = |k: u32, c: &str| json!({"taintVertex": vertex(k), "callee": c});
+    let summarized = |k: u32| json!({"taintVertex": vertex(k), "summarized": true});
+    let bare = |k: u32| json!({"taintVertex": vertex(k)});
+    let with = |props: [Value; 4]| doc(vec![flow_with(&[3, 5, 6, 7], &props.map(Some))]);
+    // The interior steps are a call step and a summarized one; so is the last, in turn.
+    let base = |last: Value| [called(1, "f"), called(2, "g"), summarized(3), last];
+    for (last, edited, same) in [
+        (
+            summarized(4),
+            [
+                called(1, "f"),
+                called(2, "g2"),
+                summarized(3),
+                summarized(4),
+            ],
+            true,
+        ),
+        (
+            summarized(4),
+            [called(1, "f"), called(2, "g"), bare(3), summarized(4)],
+            true,
+        ),
+        (
+            called(4, "h"),
+            [
+                called(1, "f"),
+                called(2, "g"),
+                summarized(3),
+                called(4, "h2"),
+            ],
+            false,
+        ),
+        (
+            summarized(4),
+            [called(1, "f"), called(2, "g"), summarized(3), bare(4)],
+            false,
+        ),
+    ] {
+        let what = format!("{edited:?}");
+        let a = f.write("a.sarif", &with(base(last)));
+        let b = f.write("b.sarif", &with(edited));
+        let r = diff(&a, &b);
+        assert!(!r.identical(), "{what}");
+        assert_eq!(counts(&r), (vec![(1, 0)], vec![(0, 1)]), "{what}");
+        let r = diff_query(&a, &b, &ends).unwrap();
+        assert_eq!(r.identical(), same, "{what}");
+        if !same {
+            assert_eq!(counts(&r), (vec![(1, 0)], vec![(0, 1)]), "{what}");
+        }
+    }
+}
+
 #[test]
 fn status_compared() {
     let f = Files::new();
@@ -671,10 +768,19 @@ fn errors_are_errors() {
     empty["runs"][0]["results"][0]["codeFlows"][0]["threadFlows"][0]["locations"] = json!([]);
     let empty = f.write("empty.sarif", &empty);
 
-    let mut bad_callee = doc(base());
-    bad_callee["runs"][0]["results"][0]["codeFlows"][0]["threadFlows"][0]["locations"][1]["properties"] =
-        json!({"callee": 3});
-    let bad_callee = f.write("callee.sarif", &bad_callee);
+    let bad_step = |name: &str, props: Value| {
+        let mut d = doc(base());
+        d["runs"][0]["results"][0]["codeFlows"][0]["threadFlows"][0]["locations"][1]["properties"] =
+            props;
+        f.write(name, &d)
+    };
+    let bad_callee = bad_step("callee.sarif", json!({"callee": 3}));
+    // A `summarized` that is not a boolean, each named in the error.
+    let bad_summarized = [
+        bad_step("summarized_string.sarif", json!({"summarized": "true"})),
+        bad_step("summarized_number.sarif", json!({"summarized": 1})),
+        bad_step("summarized_null.sarif", json!({"summarized": null})),
+    ];
 
     for endpoints_only in [false, true] {
         let opts = Options {
@@ -698,6 +804,18 @@ fn errors_are_errors() {
                     (k, c) => panic!("{k:?} for {c:?}"),
                 }
                 assert!(e.to_string().starts_with(&bad.display().to_string()));
+            }
+        }
+        for bad in &bad_summarized {
+            for (x, y) in [(&good, bad), (bad, &good)] {
+                let e = diff_query(x, y, &opts).unwrap_err();
+                assert_eq!(&e.file, bad);
+                assert!(matches!(e.kind, ErrorKind::Parse(_)), "{e}");
+                assert!(
+                    e.to_string()
+                        .ends_with("step property `summarized` is not a boolean"),
+                    "{e}"
+                );
             }
         }
     }
