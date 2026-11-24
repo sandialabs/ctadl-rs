@@ -18,13 +18,14 @@ frontend ingestion gaps — and tracks their disposition.
 | F5 — `(p + 1)->f` and `arr[1].f` lower to different paths | soundness | 39 | ❌ **open** (C pointer model) |
 | F6 — a `static` local does not persist across calls | soundness | 40 | ❌ **open** (C frontend) |
 | F7 — a pointer stored in a field does not alias its pointee | soundness | 41, CPP_252 | ❌ **open** (C pointer model / engine) |
-| F8 — a C++ reference parameter outside a reference cell cannot write back | soundness | CPP_280, CPP_281, CPP_282 | ❌ **open** (C++ frontend) |
+| F8 — a C++ reference parameter outside a reference cell cannot write back | soundness | CPP_280, CPP_281, CPP_282 | ✅ resolved (specs 047, 048, 052) |
 | F9 — reference results the frontend cannot re-root | soundness | — | ❌ **open** (C++ frontend); binding arm (CPP_330) resolved by spec 051 |
+| F10 — a one-element function-pointer table's initializer misses element 0 | soundness | 43 | ❌ **open** (C frontend) |
 
 F2 and the two frontend findings above were surfaced by the **broadened M7 generator** (it threads
 taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
 Resolved entries are kept as a record of what the approach caught and how each was fixed. **F3–F7
-are open** (2026-10-13), and **F8** since the 2026-10-20 merge of #154.
+are open** (2026-10-13). **F8** was open from the 2026-10-20 merge of #154 until spec 052.
 
 **Allowlist linkage.** While a finding is open, its case is allowlisted by a `"known_gap": "Fn"`
 (soundness) or `"known_frontend_gap": "<id>"` (ingestion) field in its `manifest.json` (see
@@ -73,12 +74,38 @@ field from the manifest **and** mark the entry below RESOLVED.
 
 ---
 
-## F8 — A C++ reference parameter outside a reference cell cannot write back (OPEN)
+## F10 — A one-element function-pointer table's initializer misses element 0 (OPEN)
 
-- **Status:** **open**, allowlisted as `known_gap: "F8"` on `CPP_280` (lambda) and `CPP_281`
-  (template). Opened 2026-10-20 by the merge of `treesitter_feature_branch` (#154). Two arms were
-  resolved on 2026-11-18: the constructor arm (`CPP_282`) by spec 047, and the reference-result
-  argument (`CPP_295`) by spec 048.
+- **Status:** **open**, allowlisted as `known_gap: "F10"` on case `43` (C). Found 2026-11-23 by
+  spec 052's probes (`i13`, `i24`); it is the same in C++.
+- **What:** `void (*tab[1])(int) = {use};` stores `ptr<use>` at the array's root `tab`, not at
+  element 0, `tab.deref`. A call through `tab[0]` reads `tab.deref` and reaches nothing. A table
+  of two or more (`{put, put}`) is initialized element-wise and works, and so does a one-element
+  `int a[1] = {x}`.
+- **Why:** the initializer is lowered at array rank 0 (the array declarator sits under a
+  function and a pointer declarator, `(*tab[1])(int)`). A single braced element at rank 0 takes
+  the braced-scalar path of `lower_braced_value`, the one for `int x = { v }`, and initializes
+  the variable itself. Two elements fall through to element numbering, which is why they work.
+- **Fix direction:** in the C frontend's aggregate initializer: compute the rank through those
+  declarators, or skip the braced-scalar rule for a declarator with an array anywhere in it.
+
+---
+
+## F8 — A C++ reference parameter outside a reference cell cannot write back (RESOLVED)
+
+- **Status:** **RESOLVED** 2026-11-23. Opened 2026-10-20 by the merge of
+  `treesitter_feature_branch` (#154). The constructor arm (`CPP_282`) was resolved by spec 047,
+  the reference-result argument (`CPP_295`) by spec 048, and the lambda (`CPP_280`) and template
+  (`CPP_281`) arms by spec 052:
+  - a lambda's `int&` is a reference cell;
+  - an indirect call passes each scalar variable as a **dual cell** (`t := x; t.deref := x`,
+    copied back), which a by-value, reference-cell or dual parameter all read and write
+    correctly;
+  - a template `T&` or `auto&` is a **dual parameter**, whose whole-parameter writes are
+    mirrored into `@pN.deref`.
+
+  Still not modelled: a member or element argument at an indirect call or a `T&` (its type is
+  not known, and a pointer must not be celled), and whole-object assignment through a `T&`.
 - **What:** since #154, SSA writes every parameter back at its entry version, so assigning a
   parameter (`out = v`) never reaches the caller, whatever its `ParameterType`. Before that, a
   `Shared` (`ByRef`) `T&` carried a root write back. The C++ frontend now lowers a non-const

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_376_dual_class_template_method_ref",
+  "description": "C++ reference arguments through indirect calls and template `T&` (spec 052), POSITIVE: `template <class T> struct Acc { void put(T& o, T v) { o = v; } }`; `Acc<int> a; a.put(x, source()); sink(x)`. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

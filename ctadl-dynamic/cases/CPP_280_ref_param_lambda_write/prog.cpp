@@ -1,4 +1,4 @@
-/* C++ reference parameters after #154, POSITIVE, KNOWN GAP F8: a lambda's `int& o` keeps the root model, because a closure is called through a pointer that cannot pass a temp cell, and since #154 rebinding a parameter never reaches the caller. s=none d=flow. */
+/* C++ reference parameters (F8 lambda arm), POSITIVE: `auto f = [](int& o) { o = source(); }; int x = 0; f(x); sink(x)`. Resolved by spec 052: a lambda's `int&` is a reference cell, and the closure call passes `x` as a dual cell. s=flow d=flow. */
 extern "C" int source();
 extern "C" void sink(int);
 

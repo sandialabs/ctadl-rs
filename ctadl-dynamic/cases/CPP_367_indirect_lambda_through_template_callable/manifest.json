@@ -1,0 +1,6 @@
+{
+  "name": "CPP_367_indirect_lambda_through_template_callable",
+  "description": "C++ reference arguments through indirect calls and template `T&` (spec 052), POSITIVE: `template <class F> void apply(F f, int& x) { f(x); }` called with a lambda writing its `int&`. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

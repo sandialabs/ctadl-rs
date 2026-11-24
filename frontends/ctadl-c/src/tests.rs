@@ -6484,3 +6484,16 @@ fn for_initializer_scope_ends_with_the_loop() {
         "{body}"
     );
 }
+
+/// A C indirect call passes its scalar arguments as they are: C has no references, so spec 052's
+/// dual cells never apply.
+#[test]
+fn c_indirect_call_passes_scalars_as_is() {
+    let src = r"
+        void use(int v) { (void)v; }
+        void f(void) { void (*fp)(int) = use; int x = 0; fp(x); }
+    ";
+    let prog = program_from_string(src).0;
+    let body = render_function(&prog, "f");
+    assert!(!body.contains(".deref"), "{body}");
+}

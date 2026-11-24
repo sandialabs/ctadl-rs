@@ -1,0 +1,6 @@
+{
+  "name": "CPP_372_indirect_by_value_no_write_back",
+  "description": "C++ reference arguments through indirect calls and template `T&` (spec 052), NEGATIVE: `void clobber(int v) { v = source(); }` through a function pointer: a by-value callee's write to its parameter never reaches the caller's dual cell. s=none d=none.",
+  "label": "Test",
+  "expect_flow": false
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_373_indirect_pointer_arg_passed_as_is",
+  "description": "C++ reference arguments through indirect calls and template `T&` (spec 052), POSITIVE: `void wr(int* p) { *p = source(); }` through a function pointer with a pointer variable: a pointer is never passed as a dual cell. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -886,6 +886,71 @@ fn pointer_locals(params: Node<'_>, body: Node<'_>, source: &str) -> HashMap<Str
     out
 }
 
+/// Whether a declaration's type and `declarator` declare a scalar (spec 052): a primitive type
+/// (`int`, `unsigned long`, `bool`, ..) and a declarator of no pointer, array or function, a
+/// reference included. `None` when the declarator names nothing.
+fn declares_scalar<'t>(declaration: Node<'t>, declarator: Node<'t>) -> Option<(Node<'t>, bool)> {
+    let scalar_type = declaration
+        .child_by_field_name("type")
+        .is_some_and(|t| matches!(t.kind(), "primitive_type" | "sized_type_specifier"));
+    let mut node = declarator;
+    loop {
+        match node.kind() {
+            "identifier" => return Some((node, scalar_type)),
+            "init_declarator" | "reference_declarator" | "parenthesized_declarator" => {
+                node = node
+                    .child_by_field_name("declarator")
+                    .or_else(|| node.named_child(0))?;
+            }
+            _ => {
+                let mut cursor = node.walk();
+                let name = node
+                    .children_by_field_name("declarator", &mut cursor)
+                    .next()
+                    .and_then(|d| declarator_shape(d).0);
+                return name.map(|name| (name, false));
+            }
+        }
+    }
+}
+
+/// The names whose every declaration in `nodes` declares a scalar ([`declares_scalar`]), not
+/// descending into nested function definitions.
+fn scalar_names(nodes: &[Node<'_>], source: &str) -> HashSet<String> {
+    fn walk(node: Node<'_>, source: &str, out: &mut HashMap<String, bool>) {
+        if matches!(
+            node.kind(),
+            "declaration" | "parameter_declaration" | "optional_parameter_declaration"
+        ) {
+            let mut cursor = node.walk();
+            for declarator in node.children_by_field_name("declarator", &mut cursor) {
+                if let Some((name, scalar)) = declares_scalar(node, declarator) {
+                    *out.entry(to_str(&name, source).to_string()).or_insert(true) &= scalar;
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if !matches!(child.kind(), "function_definition" | "lambda_expression") {
+                walk(child, source, out);
+            }
+        }
+    }
+    let mut out = HashMap::new();
+    for &node in nodes {
+        walk(node, source, &mut out);
+    }
+    out.into_iter()
+        .filter_map(|(name, scalar)| scalar.then_some(name))
+        .collect()
+}
+
+/// A function's locals and parameters whose every declaration is a scalar (spec 052), the
+/// arguments a dual cell may carry.
+fn scalar_locals(params: Node<'_>, body: Node<'_>, source: &str) -> HashSet<String> {
+    scalar_names(&[params, body], source)
+}
+
 /// What `parse_cpp_program`'s method-discovery hook learns about one class/struct: the
 /// data members and inline member-function names it declares. The shared lowering core
 /// consults these neutral maps (member resolution, method-call dispatch) but never builds
@@ -1429,15 +1494,32 @@ struct Context<'a> {
     /// slot back into its object, since any call may run the closure. Set by the
     /// `function_scan` hook, reset per function; empty for C.
     post_call_copies: Vec<(AccessPath, AccessPath)>,
-    /// Which of a defined function's **explicit** parameters are reference cells
-    /// ([`is_reference_cell_param`]), by the IR name a call site resolves to. Filled by the C++
+    /// Which of a defined function's or lambda's **explicit** parameters are reference cells
+    /// ([`RefParam::Cell`]), by the IR name a call site resolves to. Filled by the C++
     /// `collect_aux` hook before any body is lowered, so a call reaching a definition further
     /// down the file still finds it; [`Context::pass_reference_args`] consults it at every call
     /// site. Empty for C.
     reference_cell_slots: HashMap<String, Vec<bool>>,
+    /// Which explicit parameters are dual ([`RefParam::Dual`], spec 052): a template `T&` or an
+    /// `auto&`, keyed like [`Context::reference_cell_slots`]. A direct call passes a scalar
+    /// variable there as a dual cell. Empty for C.
+    dual_reference_slots: HashMap<String, Vec<bool>>,
     /// The current function's reference-cell parameters, by name: each one's value is at
     /// `@pN.deref`. Reset per function; empty for C.
     reference_cells: HashSet<String>,
+    /// The current function's dual parameters (spec 052), by name, filled by `collect_params`.
+    /// Reset per function; empty for C.
+    dual_param_names: HashSet<String>,
+    /// The current function's dual parameters as variables: a write to one's root is mirrored
+    /// into its `.deref` ([`Context::add_assign_to_program`]). Reset per function; empty for C.
+    dual_params: HashSet<VariableRef>,
+    /// The current function's locals and parameters whose every declaration is a scalar
+    /// (`int`, `long`, .., possibly by reference; see [`scalar_locals`]): the arguments a dual
+    /// cell may carry (spec 052).
+    scalar_locals: HashSet<String>,
+    /// File-scope variables whose every declaration is a scalar, by name (spec 052). Filled by
+    /// the C++ `collect_aux` hook; empty for C.
+    scalar_globals: HashSet<String>,
     /// Copies back out of the temps [`Context::pass_reference_args`] passed, as `(argument
     /// location, temp cell, weak)`, made by [`Context::emit_post_call_copies`] right after the
     /// call. A copy into one of several candidate locations is weak (spec 049).
@@ -1854,6 +1936,11 @@ impl Context<'_> {
             lookup_prefixes: Vec::new(),
             post_call_copies: Vec::new(),
             reference_cell_slots: HashMap::default(),
+            dual_reference_slots: HashMap::default(),
+            dual_param_names: HashSet::default(),
+            dual_params: HashSet::default(),
+            scalar_locals: HashSet::default(),
+            scalar_globals: HashSet::default(),
             reference_cells: HashSet::default(),
             reference_copies_out: Vec::new(),
             returned_places: HashMap::default(),
@@ -5787,6 +5874,12 @@ impl<'a> Context<'a> {
             .get(function_name)
             .cloned()
             .unwrap_or_default();
+        // And which are dual (spec 052).
+        let dual_reference_slots = self
+            .dual_reference_slots
+            .get(function_name)
+            .cloned()
+            .unwrap_or_default();
         let mut cursor = param_list.walk();
         let mut explicit = 0;
         for decl in param_list.named_children(&mut cursor) {
@@ -5797,6 +5890,7 @@ impl<'a> Context<'a> {
                 continue;
             }
             let is_reference_cell = reference_cell_slots.get(explicit).copied() == Some(true);
+            let is_dual = dual_reference_slots.get(explicit).copied() == Some(true);
             explicit += 1;
             // A `parameter_declaration` with no declarator declares no parameter here: in
             // well-formed C that shape is `f(void)` (the `void` IS the empty list) or C23's
@@ -5821,6 +5915,9 @@ impl<'a> Context<'a> {
                     );
                     if is_reference_cell {
                         self.reference_cells.insert(pn.to_string());
+                    }
+                    if is_dual {
+                        self.dual_param_names.insert(pn.to_string());
                     }
                     // A parameter whose declared type names a known class is a receiver, exactly
                     // like a local of that class: record it so a later `b.m(…)` / `p->m(…)` in
@@ -6066,6 +6163,12 @@ impl<'a> Context<'a> {
             // `qualified_identifier` node never occurs under the C grammar, so this is inert
             // for C.
             "qualified_identifier" => {
+                // A qualified name of a function used as a value (`f = S::put`, `&ns::g`) is a
+                // function pointer, as a bare function name is (spec 052).
+                if self.functions.contains_key(text) || self.declared_functions.contains(text) {
+                    let target = self.resolve_reference(text);
+                    return Ok(Exp::ObjectRef(CallObject::FunctionPtr(target.into())));
+                }
                 let ap = self.build_access_path(
                     text,
                     Default::default(),
@@ -7630,7 +7733,11 @@ impl<'a> Context<'a> {
     /// (`x`, `o.v`, `a[0]`, `*p`), `t.deref` is copied back into it after the call
     /// ([`Self::emit_post_call_copies`]). A position counts when any of `targets` takes it as a
     /// reference cell. `arg_list` is `None` where there is no argument node (a constructor's
-    /// arguments), and then only the copy in is made. A no-op for C, which records no slots.
+    /// arguments), and then only the copy in is made.
+    ///
+    /// A position that any target takes as a dual parameter ([`RefParam::Dual`], spec 052) gets
+    /// a dual cell instead when its argument is a scalar variable ([`Self::dual_cell_arg`]). A
+    /// no-op for C, which records no slots.
     fn pass_reference_args(
         &mut self,
         program: &mut Program,
@@ -7641,7 +7748,8 @@ impl<'a> Context<'a> {
         args: &mut ThinVec<Exp>,
     ) -> Result<(), Error> {
         let positions = self.reference_cell_positions(targets, args.len());
-        if !positions.contains(&true) {
+        let dual = self.dual_positions(targets, args.len());
+        if !positions.contains(&true) && !dual.contains(&true) {
             return Ok(());
         }
         // Indexed as `collect_arguments` collects them.
@@ -7652,11 +7760,18 @@ impl<'a> Context<'a> {
                 .collect()
         });
         for (i, arg) in args.iter_mut().enumerate() {
-            if !positions[i] {
+            let node = arg_nodes.get(i).copied();
+            let cell = if positions[i] {
+                self.reference_cell_arg(program, scope_view, arg)
+            } else if dual[i]
+                && let Some(node) = node
+                && self.is_scalar_variable(node, source, scope_view)
+            {
+                self.dual_cell_arg(program, scope_view, arg)
+            } else {
                 continue;
-            }
-            let cell = self.reference_cell_arg(program, scope_view, arg);
-            if let Some(&node) = arg_nodes.get(i)
+            };
+            if let Some(node) = node
                 && let Some(locations) =
                     self.argument_locations(program, node, source, scope_view)?
             {
@@ -7664,6 +7779,100 @@ impl<'a> Context<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Pass each scalar-variable argument of an indirect call as a dual cell and copy it back
+    /// after the call (spec 052). The callee is not known here, and a dual cell is right for
+    /// every callee: a by-value parameter reads the root, a reference cell reads and writes
+    /// `.deref`, and a dual parameter reads the root and writes both. A pointer, an object or any
+    /// other argument is passed as it is.
+    ///
+    /// Only a unit with some reference parameter (a cell or dual slot) needs it: otherwise no
+    /// callee can write through a reference. That is always the case for C, whose IR is
+    /// unchanged.
+    fn pass_indirect_reference_args(
+        &mut self,
+        program: &mut Program,
+        scope_view: &mut ScopeView,
+        source: &'a str,
+        arg_list: Node<'_>,
+        args: &mut ThinVec<Exp>,
+    ) -> Result<(), Error> {
+        if self.reference_cell_slots.is_empty() && self.dual_reference_slots.is_empty() {
+            return Ok(());
+        }
+        let mut cursor = arg_list.walk();
+        let arg_nodes: Vec<Node<'_>> = arg_list
+            .children(&mut cursor)
+            .filter(|c| c.is_named())
+            .collect();
+        for (arg, node) in args.iter_mut().zip(arg_nodes) {
+            if !self.is_scalar_variable(node, source, scope_view) {
+                continue;
+            }
+            let cell = self.dual_cell_arg(program, scope_view, arg);
+            if let Some(locations) = self.argument_locations(program, node, source, scope_view)? {
+                self.push_copy_back(locations, cell);
+            }
+        }
+        Ok(())
+    }
+
+    /// Which of `arity` explicit argument positions any of `targets` takes as a dual parameter.
+    fn dual_positions(&self, targets: &[String], arity: usize) -> Vec<bool> {
+        let mut positions = vec![false; arity];
+        for slots in targets
+            .iter()
+            .filter_map(|t| self.dual_reference_slots.get(t))
+        {
+            for (position, &is_dual) in positions.iter_mut().zip(slots) {
+                *position |= is_dual;
+            }
+        }
+        positions
+    }
+
+    /// Whether `node` (through parentheses) names a scalar variable (spec 052): a local or
+    /// parameter in [`Self::scalar_locals`], or else a global in [`Self::scalar_globals`]. Only
+    /// such an argument may be passed as a dual cell; a pointer must not be, since a callee's
+    /// `*q = v` would write the cell rather than the pointee.
+    fn is_scalar_variable(&self, node: Node<'_>, source: &str, scope_view: &ScopeView) -> bool {
+        let node = unparenthesized_callee(node);
+        if node.kind() != "identifier" {
+            return false;
+        }
+        let name = to_str(&node, source);
+        match self.scope_tree.find_variable(scope_view.sidx, name) {
+            Some(_) => self.scalar_locals.contains(name),
+            None => {
+                self.scalar_globals.contains(name)
+                    && self
+                        .current_method_class
+                        .as_deref()
+                        .and_then(|class| self.classes.get(class))
+                        .is_none_or(|info| !info.members.contains(name))
+            }
+        }
+    }
+
+    /// Copy `arg` into a fresh temp both at its root and in its cell, `t := arg; t.deref := arg`,
+    /// and pass `t` instead (spec 052). Returns the cell, `t.deref`.
+    fn dual_cell_arg(
+        &mut self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        arg: &mut Exp,
+    ) -> AccessPath {
+        let temp = self.allocator.next_temp();
+        let base = VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp));
+        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
+            StatementKind::assign(base.clone(), [arg.clone()]),
+            self.cur_span,
+        ));
+        let cell = AccessPath::new(base.clone(), in_cell(ThinVec::new()));
+        self.add_assign_to_program(program, scope_view, &cell, arg, None);
+        *arg = Exp::variable(base);
+        cell
     }
 
     /// Queue the copy of a reference `cell` back into the argument's `locations` after the call:
@@ -8575,6 +8784,13 @@ impl<'a> Context<'a> {
             Some(arg_node),
             &mut args,
         )?;
+        // Positions already passed as cells by name, which an indirect call keeps (spec 052).
+        let named_cells: Vec<bool> = self
+            .reference_cell_positions(&callees, args.len())
+            .into_iter()
+            .zip(self.dual_positions(&callees, args.len()))
+            .map(|(cell, dual)| cell || dual)
+            .collect();
 
         // The places the callee's reference result may name (specs 048, 049).
         let places = self.common_returned_places(&callees);
@@ -8654,6 +8870,11 @@ impl<'a> Context<'a> {
         };
 
         let direct = matches!(style, CallStyle::DirectCall { .. });
+        // An indirect call may reach a reference parameter: pass scalar variables as dual cells
+        // (spec 052).
+        if !direct && !named_cells.contains(&true) {
+            self.pass_indirect_reference_args(program, scope_view, source, arg_node, &mut args)?;
+        }
         let ret =
             VariableRef::new_local_idx(program[scope_view.fidx].locals.get_or_intern(&temp_name));
         program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
@@ -8861,6 +9082,8 @@ impl<'a> Context<'a> {
         self.captured_globals.clear();
         self.post_call_copies.clear();
         self.reference_cells.clear();
+        self.dual_param_names.clear();
+        self.dual_params.clear();
         self.result_locations.clear();
         self.template_params.clear();
         self.local_dependent.clear();
@@ -8951,6 +9174,7 @@ impl<'a> Context<'a> {
         let reference_cells = &self.reference_cells;
         self.cells.retain(|name| !reference_cells.contains(name));
         self.pointer_locals = pointer_locals(param_list, body_node, source);
+        self.scalar_locals = scalar_locals(param_list, body_node, source);
         self.cell_vars.clear();
         let cell_params: Vec<(ParameterIdx, String)> = self
             .param_names
@@ -8989,6 +9213,18 @@ impl<'a> Context<'a> {
                     .iter_enumerated()
                     .filter(|(_, n)| self.reference_cells.contains(**n))
                     .map(|(idx, _)| idx)
+                    .collect()
+            })
+            .unwrap_or_default();
+        // A dual parameter's root writes are mirrored into its cell (spec 052).
+        self.dual_params = self
+            .param_names
+            .get(func_name)
+            .map(|names| {
+                names
+                    .iter_enumerated()
+                    .filter(|(_, n)| self.dual_param_names.contains(**n))
+                    .map(|(idx, _)| VariableRef::new_parameter(idx))
                     .collect()
             })
             .unwrap_or_default();
@@ -9118,6 +9354,17 @@ impl<'a> Context<'a> {
             let mut fa: Vec<Exp> = [val_exp.clone()].into();
             if let Some(righty) = right_op {
                 fa.push(righty.clone());
+            }
+            // A write to a whole dual parameter also writes its cell, which a scalar argument's
+            // dual cell copies back to the caller (spec 052). Empty for C.
+            if self.dual_params.contains(&target.base) {
+                program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
+                    StatementKind::assign(
+                        AccessPath::new(target.base.clone(), in_cell(ThinVec::new())),
+                        fa.clone(),
+                    ),
+                    self.cur_span,
+                ));
             }
             program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
                 StatementKind::assign(target.base.clone(), fa),
@@ -9915,25 +10162,41 @@ fn note_pointer(local_pointers: &mut HashSet<String>, name: &str, is_pointer: bo
     }
 }
 
-/// Whether a parameter is a C++ non-const lvalue reference to a scalar or a pointer (`int& out`,
-/// `size_t& n`, `int*& p`). Its referent has no field to name, so a write to it would be a write
-/// to the parameter's root, and rebinding a parameter never reaches the caller (SSA writes each
-/// one back at its entry version). Such a parameter is lowered as the pointer it is: its value
-/// lives at `@pN.deref` ([`Context::reference_cells`]), and every direct call passes the argument
-/// through a temp's `.deref` and copies it back ([`Context::pass_reference_args`]).
+/// How a C++ parameter is passed when it is a non-const lvalue reference ([`reference_param_kind`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RefParam {
+    /// Passed as the caller's argument itself: not such a reference, a class referent, `const`,
+    /// `&&`, an array or a function.
+    Plain,
+    /// A reference to a scalar or a pointer, lowered as the pointer it is (spec 047).
+    Cell,
+    /// A reference to a template parameter's type or to `auto` (spec 052): plain, so a class
+    /// argument's calls dispatch on the parameter itself (spec 043), but a write to the whole
+    /// parameter is mirrored into `@pN.deref` for a scalar argument passed as a dual cell.
+    Dual,
+}
+
+/// How a parameter that may be a C++ non-const lvalue reference is passed.
 ///
-/// Left alone, so the caller's argument is passed as it always was:
+/// A reference to a scalar or a pointer (`int& out`, `size_t& n`, `int*& p`) is a [`RefParam::Cell`].
+/// Its referent has no field to name, so a write to it would be a write to the parameter's root,
+/// and rebinding a parameter never reaches the caller (SSA writes each one back at its entry
+/// version). Such a parameter is lowered as the pointer it is: its value lives at `@pN.deref`
+/// ([`Context::reference_cells`]), and every call passes the argument through a temp's `.deref`
+/// and copies it back ([`Context::pass_reference_args`]). A lambda's is too: discovery records its
+/// slots under the lambda's name, and a closure call passes a dual cell (spec 052).
+///
+/// A reference to a template parameter's type or to `auto` is [`RefParam::Dual`] (spec 052).
+///
+/// [`RefParam::Plain`], so the caller's argument is passed as it always was:
 /// - A class referent (`Box& b`), whose members are fields and already reach the caller.
 /// - A `const` reference, which nothing writes through, and an rvalue reference.
 /// - A reference to an array or a function.
-/// - A template parameter's type, whose calls dispatch on the parameter itself (spec 043), and
-///   `auto`.
-/// - A lambda's parameter. A closure is called through a pointer, which cannot pass the temp.
 ///
-/// C has no `reference_declarator`, so this is always false there.
-fn is_reference_cell_param(ctx: &Context<'_>, decl: Node<'_>, source: &str) -> bool {
+/// C has no `reference_declarator`, so this is always `Plain` there.
+pub(crate) fn reference_param_kind(ctx: &Context<'_>, decl: Node<'_>, source: &str) -> RefParam {
     if decl.kind() != "parameter_declaration" || node_has_const_qualifier(&decl, source) {
-        return false;
+        return RefParam::Plain;
     }
     let mut node = decl.child_by_field_name("declarator");
     let (mut reference, mut pointer) = (false, false);
@@ -9947,40 +10210,38 @@ fn is_reference_cell_param(ctx: &Context<'_>, decl: Node<'_>, source: &str) -> b
                     .child(0)
                     .is_some_and(|op| to_str(&op, source) != "&")
                 {
-                    return false;
+                    return RefParam::Plain;
                 }
                 reference = true;
             }
-            _ => return false,
+            _ => return RefParam::Plain,
         }
         node = current
             .child_by_field_name("declarator")
             .or_else(|| current.named_child(0));
     }
     if !reference {
-        return false;
-    }
-    let mut owner = decl.parent();
-    while let Some(n) = owner {
-        match n.kind() {
-            "lambda_expression" => return false,
-            "function_definition" | "declaration" | "field_declaration" => break,
-            _ => owner = n.parent(),
-        }
+        return RefParam::Plain;
     }
     if pointer {
-        return true;
+        return RefParam::Cell;
     }
     let Some(ty) = decl.child_by_field_name("type") else {
-        return false;
+        return RefParam::Plain;
     };
     match ty.kind() {
-        "primitive_type" | "sized_type_specifier" => true,
+        "primitive_type" | "sized_type_specifier" => RefParam::Cell,
+        "placeholder_type_specifier" => RefParam::Dual,
         "type_identifier" | "qualified_identifier" | "template_type" => {
-            !may_name_class(ctx, ty, source)
-                && !names_template_parameter(decl, to_str(&ty, source), source)
+            if names_template_parameter(decl, to_str(&ty, source), source) {
+                RefParam::Dual
+            } else if may_name_class(ctx, ty, source) {
+                RefParam::Plain
+            } else {
+                RefParam::Cell
+            }
         }
-        _ => false,
+        _ => RefParam::Plain,
     }
 }
 

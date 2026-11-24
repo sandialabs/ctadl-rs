@@ -1,0 +1,6 @@
+{
+  "name": "CPP_377_dual_template_ref_through_reference_param",
+  "description": "C++ reference arguments through indirect calls and template `T&` (spec 052), POSITIVE: `void f(int& x) { setT(x, source()); }` with a template `setT(T& o, T v)`. The reference cell parameter is a scalar variable. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

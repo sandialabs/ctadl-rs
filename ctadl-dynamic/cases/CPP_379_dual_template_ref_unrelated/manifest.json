@@ -1,0 +1,6 @@
+{
+  "name": "CPP_379_dual_template_ref_unrelated",
+  "description": "C++ reference arguments through indirect calls and template `T&` (spec 052), NEGATIVE: `setT(x, source()); sink(y)` with a template `setT(T& o, T v)`. s=none d=none.",
+  "label": "Test",
+  "expect_flow": false
+}

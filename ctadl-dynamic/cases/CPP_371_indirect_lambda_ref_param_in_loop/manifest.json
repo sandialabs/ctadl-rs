@@ -1,0 +1,6 @@
+{
+  "name": "CPP_371_indirect_lambda_ref_param_in_loop",
+  "description": "C++ reference arguments through indirect calls and template `T&` (spec 052), POSITIVE: `[](int& o) { o += source(); }` called in a loop. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

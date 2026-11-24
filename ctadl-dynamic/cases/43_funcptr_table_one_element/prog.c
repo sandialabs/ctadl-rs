@@ -1,0 +1,6 @@
+/* F10 (open): `void (*tab[1])(int) = {use}; tab[0](source())`. A one-element function-pointer table's initializer stores the pointer at the array's root, not at element 0, so the call through `tab[0]` reaches nothing. A two-element table works. s=none d=flow. Allowlisted as known_gap F10. */
+int source();
+void sink(int);
+
+void use(int v) { sink(v); }
+int main(void) { void (*tab[1])(int) = {use}; tab[0](source()); return 0; }

@@ -1622,7 +1622,7 @@ fn cpp_discover_byval_class_params(
     let mut cursor = QueryCursor::new();
     let mut it = cursor.matches(&query, root, source.as_bytes());
     let mut found: Vec<(String, Vec<Option<String>>)> = Vec::new();
-    let mut found_cells: Vec<(String, Vec<bool>)> = Vec::new();
+    let mut found_cells: Vec<(String, Vec<super::RefParam>)> = Vec::new();
     while let Some(m) = it.next() {
         let extract = MatchExtractor::new(&query, m);
         let def = extract.get("def")?;
@@ -1649,9 +1649,9 @@ fn cpp_discover_byval_class_params(
                     .and_then(|_| declared_class(ctx, *pd, source))
             })
             .collect();
-        let cells: Vec<bool> = decls
+        let kinds: Vec<super::RefParam> = decls
             .iter()
-            .map(|pd| super::is_reference_cell_param(ctx, *pd, source))
+            .map(|pd| super::reference_param_kind(ctx, *pd, source))
             .collect();
         let key = || {
             mangle_overload(
@@ -1664,15 +1664,75 @@ fn cpp_discover_byval_class_params(
         if byval.iter().any(Option::is_some) {
             found.push((key(), byval));
         }
-        if cells.contains(&true) {
-            found_cells.push((key(), cells));
+        if kinds.iter().any(|k| *k != super::RefParam::Plain) {
+            found_cells.push((key(), kinds));
+        }
+    }
+    drop(it);
+    drop(cursor);
+    // A lambda's reference parameters too, under its IR name (spec 052): a closure call passes
+    // a dual cell, which a reference cell reads and writes.
+    let query = ctx.compile_query(r#"(lambda_expression) @lambda"#);
+    let mut cursor = QueryCursor::new();
+    let mut it = cursor.matches(&query, root, source.as_bytes());
+    while let Some(m) = it.next() {
+        let extract = MatchExtractor::new(&query, m);
+        let lambda = extract.get("lambda")?;
+        let Some(params) = lambda
+            .child_by_field_name("declarator")
+            .and_then(|d| d.child_by_field_name("parameters"))
+        else {
+            continue;
+        };
+        let mut pcursor = params.walk();
+        let kinds: Vec<super::RefParam> = params
+            .children(&mut pcursor)
+            .filter(|pd| pd.kind() == "parameter_declaration")
+            .map(|pd| super::reference_param_kind(ctx, pd, source))
+            .collect();
+        if kinds.iter().any(|k| *k != super::RefParam::Plain) {
+            found_cells.push((lambda_name(lambda), kinds));
         }
     }
     drop(it);
     drop(cursor);
     ctx.byval_class_params.extend(found);
-    ctx.reference_cell_slots.extend(found_cells);
+    for (key, kinds) in found_cells {
+        let slots = |kind| kinds.iter().map(|k| *k == kind).collect::<Vec<bool>>();
+        if kinds.contains(&super::RefParam::Cell) {
+            ctx.reference_cell_slots
+                .insert(key.clone(), slots(super::RefParam::Cell));
+        }
+        if kinds.contains(&super::RefParam::Dual) {
+            ctx.dual_reference_slots
+                .insert(key, slots(super::RefParam::Dual));
+        }
+    }
+    // The file-scope scalars a dual cell may carry (spec 052): every declaration outside a
+    // function, in the unit's namespaces too.
+    let mut scopes = Vec::new();
+    collect_file_scopes(root, &mut scopes);
+    ctx.scalar_globals
+        .extend(super::scalar_names(&scopes, source));
     Ok(())
+}
+
+/// The file-scope declarations of a unit: the translation unit's own `declaration`s and those of
+/// its namespaces, never a function's or a class's (spec 052).
+fn collect_file_scopes<'t>(node: Node<'t>, out: &mut Vec<Node<'t>>) {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        match child.kind() {
+            "declaration" => out.push(child),
+            "namespace_definition" | "linkage_specification" => {
+                if let Some(body) = child.child_by_field_name("body") {
+                    collect_file_scopes(body, out);
+                }
+            }
+            "declaration_list" => collect_file_scopes(child, out),
+            _ => {}
+        }
+    }
 }
 
 /// A definition returning a non-const lvalue reference, as [`cpp_discover_returned_places`] reads

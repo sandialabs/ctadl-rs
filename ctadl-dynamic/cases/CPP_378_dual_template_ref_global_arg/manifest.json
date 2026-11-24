@@ -1,0 +1,6 @@
+{
+  "name": "CPP_378_dual_template_ref_global_arg",
+  "description": "C++ reference arguments through indirect calls and template `T&` (spec 052), POSITIVE: `int g`; `setT(g, source()); sink(g)` with a template `setT(T& o, T v)`. A scalar global is passed as a dual cell. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -474,9 +474,10 @@ fn cpp_ref_param_is_byref_write_back() {
 }
 
 /// Which reference parameters are cells (`.deref`, passed through a temp) and which keep the
-/// caller's argument as is: a class referent (in a namespace too, seen from anywhere), a const
-/// or rvalue reference, a template parameter's type, and a lambda's parameter keep it; a
-/// reference to a pointer or a typedef'd scalar is a cell.
+/// caller's argument as is: a class referent (in a namespace too, seen from anywhere), and a
+/// const or rvalue reference keep it; a reference to a pointer or a typedef'd scalar is a cell,
+/// and so is a lambda's (spec 052). A template parameter's `T&` is dual: a write to it is also
+/// stored into its cell (spec 052).
 #[test]
 fn cpp_reference_cell_params_are_scalar_and_pointer_references() {
     let src = r"
@@ -503,7 +504,11 @@ fn cpp_reference_cell_params_are_scalar_and_pointer_references() {
     let kept = body("kept");
     assert!(!kept.contains(".deref"), "{kept}");
     assert!(!body("ns::H::handle").contains(".deref"), "{prog}");
-    assert!(!body("dep").contains(".deref"), "{prog}");
+    let dep = body("dep");
+    assert!(
+        dep.contains("store @p0.deref := ") && dep.contains("assign @p0 = "),
+        "{dep}"
+    );
     let lambda = prog
         .functions
         .functions
@@ -512,7 +517,10 @@ fn cpp_reference_cell_params_are_scalar_and_pointer_references() {
         .find(|fun| fun.name.starts_with("lambda@"))
         .map(|fun| format!("{}", ctadl_ir::cir::WithGlobalNames(&prog, fun)))
         .unwrap_or_default();
-    assert!(!lambda.contains(".deref"), "{lambda}");
+    assert!(
+        lambda.contains("store @p0.deref := <const: \"3\">"),
+        "{lambda}"
+    );
 }
 
 /// A reference cell passed on to another reference parameter passes its own value through a
@@ -5793,4 +5801,99 @@ fn cpp_reference_name_is_scoped() {
         !lines.contains(&format!("assign {x} = <const: \"2\">").as_str()),
         "{body}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Spec 052 — reference arguments through indirect calls and template `T&`.
+// ---------------------------------------------------------------------------
+
+/// The trimmed lines of `body` around the first line containing `call`: `before` lines before
+/// it, and `after` after.
+fn around_call<'p>(body: &'p str, call: &str, before: usize, after: usize) -> Vec<&'p str> {
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains(call))
+        .unwrap_or_else(|| panic!("no {call}: {body}"));
+    lines[at - before..=at + after].to_vec()
+}
+
+/// A call through a closure passes a scalar variable as a dual cell, holding its value both at
+/// the root and in the cell, and copies the cell back; a pointer argument is passed as itself.
+#[test]
+fn cpp_indirect_call_passes_a_scalar_variable_as_a_dual_cell() {
+    let src = r"
+        void wr(int* p) { *p = 2; }
+        void f() {
+            auto g = [](int& o) { o = 1; };
+            int x = 0; g(x);
+            int y = 0; int* p = &y; void (*h)(int*) = wr; h(p);
+        }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    let x = local_operand(&prog, "f", "x");
+    let p = local_operand(&prog, "f", "p");
+    let body = render_function(&prog, "f");
+    let lines = around_call(&body, "funcptr-call", 2, 2);
+    let temp = lines[0]["assign ".len()..].split(' ').next().unwrap();
+    assert_eq!(lines[0], format!("assign {temp} = {x}"), "{body}");
+    assert_eq!(lines[1], format!("store {temp}.deref := {x}"), "{body}");
+    assert!(lines[2].ends_with(&format!("({temp})")), "{body}");
+    assert!(lines[3].ends_with(&format!(" = {temp}.deref")), "{body}");
+    assert!(lines[4].starts_with(&format!("assign {x} = ")), "{body}");
+    assert!(
+        body.lines()
+            .any(|l| l.contains("funcptr-call") && l.trim().ends_with(&format!("({p})"))),
+        "the pointer is passed as itself: {body}"
+    );
+    let lambda = prog
+        .functions
+        .functions
+        .raw
+        .iter()
+        .find(|fun| fun.name.starts_with("lambda@"))
+        .map(|fun| format!("{}", ctadl_ir::cir::WithGlobalNames(&prog, fun)))
+        .expect("the lambda");
+    assert!(
+        lambda.contains("store @p0.deref := <const: \"1\">"),
+        "{lambda}"
+    );
+}
+
+/// A template parameter's `T&` is dual: a write to it is also stored into its cell, and a direct
+/// call passes a scalar variable there as a dual cell.
+#[test]
+fn cpp_template_reference_parameter_is_dual() {
+    let src = r"
+        template <class T> void setT(T& o, T v) { o = v; }
+        void f() { int x = 0; setT(x, 5); }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    let callee = render_function(&prog, "setT");
+    assert!(
+        callee.contains("store @p0.deref := @p1") && callee.contains("assign @p0 = @p1"),
+        "{callee}"
+    );
+    let x = local_operand(&prog, "f", "x");
+    let body = render_function(&prog, "f");
+    let lines = around_call(&body, "direct-call setT", 2, 2);
+    let temp = lines[0]["assign ".len()..].split(' ').next().unwrap();
+    assert_eq!(lines[0], format!("assign {temp} = {x}"), "{body}");
+    assert_eq!(lines[1], format!("store {temp}.deref := {x}"), "{body}");
+    assert!(lines[2].contains(&format!("({temp}, ")), "{body}");
+    assert!(lines[3].ends_with(&format!(" = {temp}.deref")), "{body}");
+    assert!(lines[4].starts_with(&format!("assign {x} = ")), "{body}");
+}
+
+/// A qualified function name used as a value is a function pointer (spec 052), with or without
+/// `&`, as a bare function name is.
+#[test]
+fn cpp_qualified_function_name_is_a_function_pointer() {
+    let src = r"
+        struct S { static void put(int& o) { o = 1; } };
+        void f() { void (*g)(int&) = &S::put; void (*h)(int&) = S::put; }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    let body = render_function(&prog, "f");
+    assert_eq!(body.matches("= ptr<S::put>").count(), 2, "{body}");
 }

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_374_dual_generic_lambda_auto_ref",
+  "description": "C++ reference arguments through indirect calls and template `T&` (spec 052), POSITIVE: `auto f = [](auto& o) { o = source(); }; f(x); sink(x)`. An `auto&` is a dual parameter. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

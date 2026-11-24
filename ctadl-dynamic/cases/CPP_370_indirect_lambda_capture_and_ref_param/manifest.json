@@ -1,0 +1,6 @@
+{
+  "name": "CPP_370_indirect_lambda_capture_and_ref_param",
+  "description": "C++ reference arguments through indirect calls and template `T&` (spec 052), POSITIVE: `[&y](int& o) { o = source(); y = 1; }` called `f(x); sink(x + y)`. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

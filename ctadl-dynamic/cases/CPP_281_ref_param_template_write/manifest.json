@@ -1,7 +1,6 @@
 {
   "name": "CPP_281_ref_param_template_write",
-  "description": "C++ reference parameters after #154, POSITIVE, KNOWN GAP F8: a template parameter's reference `T& o` keeps the root model (its method calls dispatch on the parameter itself, spec 043), so `o = v` is a rebinding that does not reach the caller. s=none d=flow.",
+  "description": "C++ reference parameters (F8 template arm), POSITIVE: `template <class T> void setT(T& o, T v) { o = v; }`; `setT(x, source()); sink(x)`. Resolved by spec 052: a template `T&` is a dual parameter, whose write is mirrored into its cell, and the call passes `x` as a dual cell. s=flow d=flow.",
   "label": "Test",
-  "expect_flow": true,
-  "known_gap": "F8"
+  "expect_flow": true
 }
