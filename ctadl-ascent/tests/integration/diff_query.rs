@@ -2,14 +2,15 @@
 //! (order where SARIF gives it none, including the order of execution notifications; the
 //! numbering of `run.logicalLocations`; instruction and function ids, also inside a step's
 //! `taintVertex`; message text, and a notification's message arguments) reports nothing. An
-//! edit that changes something compared (a result, a step's `taintVertex` or `callee`, a
+//! edit that changes something compared (a result, a step's `taintVertex`, `callee` or
+//! `summarized`, a
 //! notification's level or property, an invocation's `executionSuccessful` or `exitCode`) is
 //! reported as exactly what it changed, and nothing else.
 //!
 //! The fixture is `ties.c` indexed with `ties.json` and queried in every profile. Its interior
 //! steps are all summarized, so the tests of step properties also run on a Flowy fixture whose
-//! interior steps have a `callee`. The step properties are the ones `ctadl query` wrote, and
-//! every query checks each step of every flow it writes. Each test edits that SARIF as JSON, or
+//! interior steps have a `callee`. The step properties are the ones `ctadl query` wrote. Each
+//! test edits that SARIF as JSON, or
 //! queries a program indexed with other ids, and first checks that the edit changed something,
 //! so an edit that is a no-op cannot pass. A program whose one call site has two callees is
 //! indexed twice with the two callees' ids in opposite orders.
@@ -43,7 +44,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 /// Queries `project` with `models` in every profile, writing `<profile>.sarif` into a new
-/// directory `out` in the store. The query checks every step of every flow it writes.
+/// directory `out` in the store.
 fn query_all(project: &AnalysisProject, models: &[PathBuf], out: &str) -> PathBuf {
     let dir = store_dir().join(out);
     std::fs::create_dir_all(&dir).unwrap();
@@ -291,8 +292,8 @@ fn base(profile: &'static str) -> Base {
     Base::new(ties(), "ties.c", profile)
 }
 
-/// The files the tests of step properties edit, in every profile: `ties.c`'s, whose interior
-/// steps are summarized, and [`one_frame_down`]'s, whose interior steps have a `callee`.
+/// The files the tests of step properties edit, in every profile: `ties.c`'s and
+/// [`one_frame_down`]'s.
 fn step_bases() -> Vec<Base> {
     let mut bases = Vec::new();
     for (_, profile) in PROFILES {

@@ -2759,8 +2759,6 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         source_data.id_to_name.insert(id, name.clone());
     }
     populate_source_info(ctx, profile, sarif_data, &mut source_data, &needed_spans).await?;
-    // Built from the names that are written, so the order of a site's callees is the order
-    // of what a reader sees.
     let site_callees = site_callees(&ctx.facts.call, &source_data.id_to_name);
 
     let mut span_to_location: BTreeMap<SpanKey, Location> = BTreeMap::new();
@@ -3000,8 +2998,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     Some(f) => (StepCallee::Named(f), f),
                     None => (
                         StepCallee::Summarized,
-                        InsnSiteId::new(site.func_id, site.insn_id)
-                            .try_into()
+                        PackedInsnSiteId::try_from(site)
                             .ok()
                             .and_then(|packed| site_callees.get(&packed))
                             .and_then(|callees| callees.first().copied())
@@ -3239,12 +3236,9 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             }
 
             // Name the source and sink functions so consumers can match on them directly
-            // instead of reconstructing them from the taint statement vertex. The model
-            // attaches an endpoint to the callee method (e.g. `nvram_get` / `system`); after
-            // call-site anchoring the endpoint's `infunc` is the *caller*, and the endpoint
-            // does not record which of its site's callees the model named, so every callee
-            // of the site is listed -- see `endpoint_callees`. `taintLabels` carries the
-            // source *kind*; these add the source/sink *function names*.
+            // instead of reconstructing them from the taint statement vertex -- see
+            // `endpoint_callees`. `taintLabels` carries the source *kind*; these add the
+            // source/sink *function names*.
             let mut source_functions: BTreeSet<String> = BTreeSet::new();
             let mut sink_functions: BTreeSet<String> = BTreeSet::new();
             let names = |ep: &QueryEndpoint| -> Vec<String> {
@@ -3313,9 +3307,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     Ok((results, path_stats))
 }
 
-/// A vertex as it is written: its variable, then its access path (`call-arg(3, 0).foo`). A
-/// step's message and its `taintVertex`, and the `taintVertex` of a source or sink result, are
-/// this text.
+/// A vertex as it is written: its variable, then its access path (`call-arg(3, 0).foo`).
 fn vertex_text(var: &FlowVariable, path: &Path) -> String {
     format!("{var}{}", path.to_dot_string())
 }
@@ -3428,8 +3420,6 @@ fn format_source_sink_results(
             // "formal(1) in function main" lines. The label (taint kind) is the
             // other distinguishing field; carry it in `properties` below.
             let vertex = vertex_text(&node.1, &node.2);
-            // Name the source/sink by the framework method it models (a callee
-            // at its anchored call site, the first by name), not the caller `infunc` holds.
             let callee_id = endpoint_callee(endpoint, site_callees);
             let label = endpoint.label.0.to_string();
             // A global is anchored at no function. It is named by a logical location
