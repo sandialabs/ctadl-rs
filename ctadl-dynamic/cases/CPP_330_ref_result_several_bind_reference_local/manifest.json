@@ -1,7 +1,6 @@
 {
   "name": "CPP_330_ref_result_several_bind_reference_local",
-  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE, KNOWN GAP F9: `int& choose(int& a, int& b, int c) { if (c) return a; return b; }`; `int& r = choose(x, y, 1); r = source(); sink(x)`. A reference local cannot alias several locations, so it binds the result temp. s=none d=flow.",
+  "description": "C++ reference results through pointers and with several places (spec 049), POSITIVE: `int& choose(int& a, int& b, int c) { if (c) return a; return b; }`; `int& r = choose(x, y, 1); r = source(); sink(x)`. F9's binding arm, resolved by spec 051: a reference bound to several locations aliases a places proxy, written weakly on each. s=flow d=flow.",
   "label": "Test",
-  "expect_flow": true,
-  "known_gap": "F9"
+  "expect_flow": true
 }

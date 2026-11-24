@@ -1,0 +1,6 @@
+{
+  "name": "CPP_351_ref_several_conditional_write",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `int& r = argc > 0 ? x : y; r = source(); sink(x)`. A choice of locations binds both. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -19,6 +19,7 @@ frontend ingestion gaps — and tracks their disposition.
 | F6 — a `static` local does not persist across calls | soundness | 40 | ❌ **open** (C frontend) |
 | F7 — a pointer stored in a field does not alias its pointee | soundness | 41, CPP_252 | ❌ **open** (C pointer model / engine) |
 | F8 — a C++ reference parameter outside a reference cell cannot write back | soundness | CPP_280, CPP_281, CPP_282 | ❌ **open** (C++ frontend) |
+| F9 — reference results the frontend cannot re-root | soundness | — | ❌ **open** (C++ frontend); binding arm (CPP_330) resolved by spec 051 |
 
 F2 and the two frontend findings above were surfaced by the **broadened M7 generator** (it threads
 taint through arrays, `switch`, `goto`, and function-pointer combinations, then scans at volume).
@@ -34,11 +35,13 @@ field from the manifest **and** mark the entry below RESOLVED.
 
 ---
 
-## F9 — A reference bound to a result with several places aliases nothing (OPEN)
+## F9 — Reference results the frontend cannot re-root (OPEN)
 
-- **Status:** **open**, allowlisted as `known_gap: "F9"` on `CPP_330`. Opened 2026-11-18 by spec
-  048 for pointer-parameter places and results with several places. Spec 049 resolved both
-  (`CPP_309`–`CPP_311`, `CPP_314`–`CPP_329`, `CPP_331`–`CPP_332`); what remains is below.
+- **Status:** **open**, with no allowlisted case. Opened 2026-11-18 by spec 048 for
+  pointer-parameter places and results with several places. Spec 049 resolved both
+  (`CPP_309`–`CPP_311`, `CPP_314`–`CPP_329`, `CPP_331`–`CPP_332`). Spec 051 (2026-11-23)
+  resolved binding a reference local to several locations (`CPP_330`, `CPP_350`–`CPP_358`);
+  what remains is below.
 - **What is modelled now:**
   - A reference result's places (specs 048, 049) are re-rooted at each call:
     - a reference parameter;
@@ -52,10 +55,10 @@ field from the manifest **and** mark the entry below RESOLVED.
   - One location is written strongly. Several (and a caller-side `c ? x : y` of two lvalues) are
     written **weakly**, `L := v, L`, by assignment, compound assignment, `++`/`--` and
     reference-cell copy-back.
+  - A reference local bound to several locations (`int& r = choose(x, y, c)`,
+    `int& r = c ? x : y`, spec 051) aliases a places proxy: a read through `r` blends the
+    candidates, and a write is weak on each.
 - **What is still lost:**
-  - **Binding a reference local to several locations:** `int& r = choose(x, y, c)` (`CPP_330`) or
-    `int& r = c ? x : y`. `reference_aliases` maps a name to one path, so the binding takes the
-    result temp, and a write through `r` reaches neither candidate.
   - **A pointer root on a global**, `int& f() { return *gp; }`.
   - **A pointer root composed through anything but a bare parameter:** `return deref(&v);`,
     `return deref(q.p);`.
@@ -64,11 +67,9 @@ field from the manifest **and** mark the entry below RESOLVED.
   - **Arithmetic in the returned expression** beyond a subscript (`return *(p + i);`), a
     conditional arm that is a call (`(c ? x : pick(y)) = v`), and lambdas or function pointers
     returning references.
-- **Fix direction:** in the frontend.
-  - For a reference bound to several locations, let `reference_aliases` hold a set: a read
-    through the reference blends the candidates, and a write is weak on each.
-  - For the rest, extend `place_of` and `root_op_location` shape by shape, keeping the rule that
-    a re-rooted place lowers the way that expression written at the call site would.
+- **Fix direction:** in the frontend. Extend `place_of` and `root_op_location` shape by shape,
+  keeping the rule that a re-rooted place lowers the way that expression written at the call
+  site would.
 
 ---
 

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_362_ref_bind_deref_param_pointer",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `void f(int* p) { int& r = *p; r = source(); }`, then `f(&x); sink(x)`. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

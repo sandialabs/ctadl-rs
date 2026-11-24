@@ -1,0 +1,6 @@
+{
+  "name": "CPP_355_ref_several_global_places",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `int& r = pickg(1); r = source(); sink(ga)`, where `pickg` returns either of two globals. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

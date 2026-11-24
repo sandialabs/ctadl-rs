@@ -1,0 +1,6 @@
+{
+  "name": "CPP_352_ref_several_read_sees_later_write",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `int& r = choose(x, y, 1); x = source(); sink(r)`. A read through the reference blends the candidates' current values. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

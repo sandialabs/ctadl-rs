@@ -3051,7 +3051,7 @@ fn cpp_try_new<'a>(
         return Ok(false);
     };
     // Bind the pointer as an alias of the heap object and record its declared static type.
-    ctx.reference_aliases.insert(ptr_name.to_string(), obj_path);
+    ctx.bind_alias(scope_view, ptr_name, obj_path);
     ctx.local_types
         .insert(ptr_name.to_string(), declared_class.to_string());
     Ok(true)

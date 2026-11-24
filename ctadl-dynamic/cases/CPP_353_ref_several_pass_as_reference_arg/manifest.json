@@ -1,0 +1,6 @@
+{
+  "name": "CPP_353_ref_several_pass_as_reference_arg",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `int& r = choose(x, y, 1); set(r); sink(x)` with `void set(int& o)`. The reference cell's copy-back writes each candidate weakly. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

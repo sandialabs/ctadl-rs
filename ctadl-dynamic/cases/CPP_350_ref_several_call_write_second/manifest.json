@@ -1,0 +1,6 @@
+{
+  "name": "CPP_350_ref_several_call_write_second",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `int& r = choose(x, y, 0); r = source(); sink(y)`, where `choose` returns either reference parameter. The binding aliases a places proxy, and the write is weak on each candidate. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

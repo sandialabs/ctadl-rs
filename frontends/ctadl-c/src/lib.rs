@@ -1393,7 +1393,18 @@ struct Context<'a> {
     /// Filled in [`Context::walk_declaration`]; only ever populated under C++ (C has no
     /// `reference_declarator`), so it is empty for C and the C path is unchanged. Reset per
     /// function in [`Context::lower_function`].
-    reference_aliases: HashMap<String, AccessPath>,
+    ///
+    /// Keyed by name, then by the declaring scope (spec 051): a bound name is declared in the
+    /// scope tree like any local ([`Context::bind_alias`]), so the innermost declaration of a
+    /// name decides whether a use is the reference ([`Context::reference_alias`]). A temp alias
+    /// (`<tN>`, never in the scope tree) has the key `None`.
+    reference_aliases: HashMap<String, HashMap<Option<usize>, AccessPath>>,
+    /// A reference bound to several locations (spec 051) aliases a *places proxy*: a local that
+    /// maps here to its candidate locations. [`Context::emit_loads`] reads a proxy-rooted path
+    /// from every candidate, and [`Context::add_assign_to_program`] writes one into every
+    /// candidate weakly, so nothing but the binding's blend names the proxy in the IR. Reset per
+    /// function; empty for C.
+    reference_places: HashMap<VariableRef, Vec<AccessPath>>,
     /// C++ type aliases that name a class -- `using IntBox = Box<int>;`, `typedef Box<int> B;`
     /// -- by alias, to the (template-erased) class (spec 033). Filled by the C++ `collect_aux`
     /// hook; empty for C. Read through [`Context::class_named`].
@@ -1835,6 +1846,7 @@ impl Context<'_> {
             local_types: HashMap::default(),
             current_method_class: None,
             reference_aliases: HashMap::default(),
+            reference_places: HashMap::default(),
             type_aliases: HashMap::default(),
             captured_globals: HashMap::default(),
             using_namespaces: Vec::new(),
@@ -4486,10 +4498,9 @@ impl<'a> Context<'a> {
                 None => push_element(&mut location.segments, Some(index as i64)),
             }
             if by_ref {
-                self.reference_aliases.insert(name.to_string(), location);
+                self.bind_alias(scope_view, name, location);
                 continue;
             }
-            self.reference_aliases.remove(name);
             self.scope_tree
                 .add_variable(scope_view.sidx, name.to_string(), VarKind::Local);
             let target = self.build_access_path(
@@ -4504,14 +4515,19 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
-    /// Bind a C++ reference local `T& r = x;`. A reference *is* its referent's storage, so
+    /// Bind a C++ reference local `T& r = e;`. A reference *is* its referent's storage, so
     /// instead of emitting a copy we record `r -> <referent access path>` in
     /// [`Context::reference_aliases`]; [`Context::build_access_path`] then resolves every use
-    /// (read or write) of `r` to the referent. The referent must be a resolvable lvalue — an
-    /// identifier or a field access, the in-scope forms, which [`Context::flatten_expr`]
-    /// returns as a side-effect-free `AccessPath`. For anything else (or a malformed
-    /// reference) we fall back to a plain local plus a copy so lowering never fails. Only
-    /// reached under C++ (C has no `reference_declarator`), so the C path is unaffected.
+    /// (read or write) of `r` to the referent.
+    ///
+    /// The referent is every location `e` names, computed as a write to `e` would compute them
+    /// ([`Context::lvalue_locations`]), so `e`'s effects are lowered once (spec 051): a plain
+    /// lvalue (a name, member, element or dereference), a choice of locations `c ? x : y`, or a
+    /// call, whose reference result names one location or several (specs 036, 048, 049). One
+    /// location is aliased directly; several bind a places proxy ([`Self::bind_places`]). For
+    /// anything else (a temporary bound to a `const T&`, or a malformed reference) we fall back
+    /// to a plain local plus a copy so lowering never fails. Only reached under C++ (C has no
+    /// `reference_declarator`), so the C path is unaffected.
     fn bind_reference_local(
         &mut self,
         source: &'a str,
@@ -4525,26 +4541,31 @@ impl<'a> Context<'a> {
 
         if let Some(name_node) = name_node {
             let ref_name = to_str(&name_node, source);
-            // Alias the reference to its referent's *location*, not to a loaded copy of it —
-            // a reference **is** the referent's storage, so a write through `r` must land on
-            // `x`. An identifier/field referent is an lvalue, so resolve it with
-            // `flatten_lvalue` (which keeps the symbolic path intact instead of loading it).
+            // Alias the reference to its referent's *locations*, not to a loaded copy — a
+            // write through `r` must land on the referent.
             if let Some(val) = value
-                && matches!(val.kind(), "identifier" | "field_expression")
-                && let Ok(path) = self.flatten_lvalue(program, val, source, scope_view)
+                && names_locations(val, source)
+                && !self.is_overloaded_access(val, source, scope_view)
             {
-                self.reference_aliases.insert(ref_name.to_string(), path);
-                return Ok(());
-            }
-            // A `call_expression` referent names the location its reference result denotes
-            // (`Box& r = b.setV(x)` the receiver, `int& r = b.ref()` the member; spec 036), or
-            // for any other call the value it returns.
-            if let Some(val) = value
-                && val.kind() == "call_expression"
-            {
-                let loc = self.flatten_lvalue(program, val, source, scope_view)?;
-                self.reference_aliases.insert(ref_name.to_string(), loc);
-                return Ok(());
+                // A plain lvalue that does not resolve takes the fallback below, as an
+                // identifier or member referent always has; a call or choice reports its error.
+                let mut locations = match self.lvalue_locations(program, val, source, scope_view) {
+                    Ok(locations) => locations,
+                    Err(_) if is_plain_lvalue(val, source) => Vec::new(),
+                    Err(error) => return Err(error),
+                };
+                match locations.len() {
+                    0 => {}
+                    1 => {
+                        let location = locations.pop().expect("one location");
+                        self.bind_alias(scope_view, ref_name, location);
+                        return Ok(());
+                    }
+                    _ => {
+                        self.bind_places(program, scope_view, ref_name, locations);
+                        return Ok(());
+                    }
+                }
             }
             // Fallback: register a plain local and copy whatever initializer there is.
             self.scope_tree
@@ -4554,6 +4575,103 @@ impl<'a> Context<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Bind `name` as a reference to `location` in the current scope (spec 051): `name` is
+    /// declared in the scope tree like any local, and its alias is keyed by that scope, so a
+    /// later declaration reusing the name (a sibling scope's `int r`) is that variable, and an
+    /// inner one shadows the reference only while its scope is open.
+    pub(crate) fn bind_alias(&mut self, scope_view: &ScopeView, name: &str, location: AccessPath) {
+        self.scope_tree
+            .add_variable(scope_view.sidx, name.to_string(), VarKind::Local);
+        self.reference_aliases
+            .entry(name.to_string())
+            .or_default()
+            .insert(Some(scope_view.sidx), location);
+    }
+
+    /// The location a use of `name` at `scope_view` aliases, if `name` is a reference there: the
+    /// innermost declaration of `name` decides ([`Self::bind_alias`]). A name the scope tree
+    /// does not know (a temp) uses its unscoped alias.
+    fn reference_alias(&self, name: &str, scope_view: &ScopeView) -> Option<&AccessPath> {
+        let aliases = self.reference_aliases.get(name)?;
+        let scope = self
+            .scope_tree
+            .find_variable(scope_view.sidx, name)
+            .map(|decl| decl.sidx);
+        aliases.get(&scope)
+    }
+
+    /// Bind `name` as a reference to one of several `locations` (spec 051): a fresh places
+    /// proxy `P`, initialized with a blend of every candidate (`P := L1, .., Ln`) and recorded
+    /// in [`Self::reference_places`], which [`Self::emit_loads`] and
+    /// [`Self::add_assign_to_program`] expand. The blend is the only statement that names `P`;
+    /// it keeps a read that bypassed both at least as tainted as the binding.
+    fn bind_places(
+        &mut self,
+        program: &mut Program,
+        scope_view: &ScopeView,
+        name: &str,
+        locations: Vec<AccessPath>,
+    ) {
+        let sources: Vec<Exp> = locations
+            .iter()
+            .map(|location| Exp::path(self.emit_loads(program, scope_view, location.clone())))
+            .collect();
+        let proxy = VariableRef::new_local_idx(
+            program[scope_view.fidx]
+                .locals
+                .get_or_intern(&self.allocator.next_temp()),
+        );
+        program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
+            StatementKind::assign(proxy.clone(), sources),
+            self.cur_span,
+        ));
+        self.reference_places.insert(proxy.clone(), locations);
+        self.bind_alias(scope_view, name, AccessPath::from(proxy));
+    }
+
+    /// Whether `node` (through parentheses) is `a[i]` or `*a` on a class object whose class
+    /// declares `operator[]` / `operator*`: a method call, which `flatten_lvalue`'s built-in
+    /// element and dereference arms do not model, so a reference binding keeps its fallback
+    /// (spec 051). Always `false` for C, which has no classes.
+    fn is_overloaded_access(&self, node: Node<'_>, source: &str, scope_view: &ScopeView) -> bool {
+        let node = unparenthesized_callee(node);
+        let (operand, operator) = match node.kind() {
+            "subscript_expression" => (node.child_by_field_name("argument"), "operator[]"),
+            "pointer_expression" => (node.child_by_field_name("argument"), "operator*"),
+            _ => return false,
+        };
+        let Some(operand) = operand else {
+            return false;
+        };
+        !self.is_pointer_like(operand, source, scope_view)
+            && self
+                .object_class_of(operand, source, scope_view)
+                .is_some_and(|class| self.resolve_method_class(&class, operator).is_some())
+    }
+
+    /// Whether a receiver at `location` is passed as a copy and written back after the call: a
+    /// location named by a path (spec 030), or a places proxy (spec 051), whose write-back is
+    /// weak on each candidate. A plain local object is passed as itself.
+    fn is_written_back(&self, location: &AccessPath) -> bool {
+        !location.is_pathless() || self.reference_places.contains_key(&location.base)
+    }
+
+    /// The candidate locations of `path` when it is rooted at a places proxy (spec 051), each
+    /// with `path`'s segments appended.
+    fn proxy_places(&self, path: &AccessPath) -> Option<Vec<AccessPath>> {
+        let places = self.reference_places.get(&path.base)?;
+        Some(
+            places
+                .iter()
+                .map(|place| {
+                    let mut place = place.clone();
+                    place.extend(path.segments.iter().cloned());
+                    place
+                })
+                .collect(),
+        )
     }
 
     fn walk_return(
@@ -4700,7 +4818,12 @@ impl<'a> Context<'a> {
         body_scope.continue_frame_depth = body_scope.break_frame_depth;
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
         self.walk_compound_statement(source, program, &update_scope, &update_cp)?;
-        *scope_view = continuation;
+        // The statement's own scopes (a `for` initializer, a condition declaration) end
+        // with it: what follows resolves names in the caller's scope (spec 051).
+        *scope_view = ScopeView {
+            sidx: scope_view.sidx,
+            ..continuation
+        };
         Ok(())
     }
 
@@ -4768,7 +4891,12 @@ impl<'a> Context<'a> {
         body_scope.break_frame_depth = Some(self.dtor_frames.len());
         body_scope.continue_frame_depth = body_scope.break_frame_depth;
         self.walk_compound_statement(source, program, &body_scope, &cp)?;
-        *scope_view = continuation;
+        // The statement's own scopes (a `for` initializer, a condition declaration) end
+        // with it: what follows resolves names in the caller's scope (spec 051).
+        *scope_view = ScopeView {
+            sidx: scope_view.sidx,
+            ..continuation
+        };
         Ok(())
     }
 
@@ -4916,11 +5044,9 @@ impl<'a> Context<'a> {
         if declarator.kind() == "reference_declarator"
             && let Ok(location) = &element
         {
-            self.reference_aliases
-                .insert(name.to_string(), location.clone());
+            self.bind_alias(head, name, location.clone());
             return Ok(());
         }
-        self.reference_aliases.remove(name);
         self.scope_tree
             .add_variable(head.sidx, name.to_string(), VarKind::Local);
         let target = self.build_access_path(
@@ -4991,7 +5117,12 @@ impl<'a> Context<'a> {
         body_scope.break_frame_depth = Some(self.dtor_frames.len());
         body_scope.continue_frame_depth = body_scope.break_frame_depth;
         self.walk_compound_statement(source, program, &body_scope, &body_cp)?;
-        *scope_view = continuation;
+        // The statement's own scopes (a `for` initializer, a condition declaration) end
+        // with it: what follows resolves names in the caller's scope (spec 051).
+        *scope_view = ScopeView {
+            sidx: scope_view.sidx,
+            ..continuation
+        };
         Ok(())
     }
 
@@ -5049,7 +5180,12 @@ impl<'a> Context<'a> {
         body_scope.break_frame_depth = Some(self.dtor_frames.len());
         body_scope.continue_frame_depth = body_scope.break_frame_depth;
         self.walk_compound_statement(source, program, &body_scope, &cp)?;
-        *scope_view = continuation;
+        // The statement's own scopes (a `for` initializer, a condition declaration) end
+        // with it: what follows resolves names in the caller's scope (spec 051).
+        *scope_view = ScopeView {
+            sidx: scope_view.sidx,
+            ..continuation
+        };
         Ok(())
     }
 
@@ -5169,7 +5305,12 @@ impl<'a> Context<'a> {
             self.walk_compound_statement(source, program, &arm_sv, &cp)?;
         }
 
-        *scope_view = continuation;
+        // The statement's own scopes (a `for` initializer, a condition declaration) end
+        // with it: what follows resolves names in the caller's scope (spec 051).
+        *scope_view = ScopeView {
+            sidx: scope_view.sidx,
+            ..continuation
+        };
         Ok(())
     }
 
@@ -5448,7 +5589,12 @@ impl<'a> Context<'a> {
             // which is linked above, so the condition must not also reach the join.)
             link_blocks(program, scope_view, &continuation, false)?;
         }
-        *scope_view = continuation;
+        // The statement's own scopes (a `for` initializer, a condition declaration) end
+        // with it: what follows resolves names in the caller's scope (spec 051).
+        *scope_view = ScopeView {
+            sidx: scope_view.sidx,
+            ..continuation
+        };
         Ok(())
     }
 
@@ -5497,7 +5643,7 @@ impl<'a> Context<'a> {
         // A C++ reference local (`T& r = x`) aliases its referent: resolve the name to the
         // referent's access path and append any trailing path. The map is empty for C (no
         // `reference_declarator`), so this never fires on the C path.
-        if let Some(aliased) = self.reference_aliases.get(name_pre_scope) {
+        if let Some(aliased) = self.reference_alias(name_pre_scope, scope_view) {
             let mut ap = aliased.clone();
             ap.extend(path);
             return ap;
@@ -6804,7 +6950,7 @@ impl<'a> Context<'a> {
                         );
                         // An object named by a path (a global, or one shared with a lambda) is
                         // passed as the value loaded from it, and written back (spec 034).
-                        let write_back = (!ap.is_pathless()).then(|| ap.clone());
+                        let write_back = self.is_written_back(&ap).then(|| ap.clone());
                         let exp = Exp::path(self.emit_loads(program, scope_view, ap));
                         Ok(Some(RecvObj {
                             exp,
@@ -6948,7 +7094,7 @@ impl<'a> Context<'a> {
         };
         let location = self.deref_location(program, inner, source, scope_view)?;
         let exp = Exp::path(self.emit_loads(program, scope_view, location.clone()));
-        let write_back = (!location.is_pathless()).then_some(location);
+        let write_back = self.is_written_back(&location).then_some(location);
         Ok(Some(RecvObj {
             exp,
             class,
@@ -7099,7 +7245,7 @@ impl<'a> Context<'a> {
         };
         let location = self.flatten_lvalue(program, node, source, scope_view)?;
         let exp = Exp::path(self.emit_loads(program, scope_view, location.clone()));
-        let write_back = (!location.is_pathless()).then_some(location);
+        let write_back = self.is_written_back(&location).then_some(location);
         Ok(Some(RecvObj {
             exp,
             class,
@@ -8119,7 +8265,11 @@ impl<'a> Context<'a> {
         };
         let aliased = match (returns_self, recv_loc) {
             (true, Some(loc)) => {
-                self.reference_aliases.insert(temp_name.clone(), loc);
+                // A temp is never in the scope tree: its alias is unscoped (spec 051).
+                self.reference_aliases
+                    .entry(temp_name.clone())
+                    .or_default()
+                    .insert(None, loc);
                 self.local_types
                     .insert(temp_name.clone(), recv.class.clone());
                 Some(recv.clone())
@@ -8707,6 +8857,7 @@ impl<'a> Context<'a> {
         self.local_types.clear();
         self.local_pointers.clear();
         self.reference_aliases.clear();
+        self.reference_places.clear();
         self.captured_globals.clear();
         self.post_call_copies.clear();
         self.reference_cells.clear();
@@ -8943,6 +9094,25 @@ impl<'a> Context<'a> {
         left_op: &Exp,
         right_op: Option<&Exp>,
     ) {
+        // A write through a reference bound to several locations (spec 051) is weak on each,
+        // since only one is the referent: `Li.s := left, right, Li.s`, keeping both operands.
+        if let Some(places) = self.proxy_places(target) {
+            for mut place in places {
+                // An offsets-only location names memory, as below.
+                if !place.is_pathless() && place.segments.iter().all(PathSegment::is_offset) {
+                    place.push(PathSegment::Deref);
+                }
+                let old = Exp::path(self.emit_loads(program, scope_view, place.clone()));
+                let sources = std::iter::once(left_op.clone())
+                    .chain(right_op.cloned())
+                    .chain(std::iter::once(old));
+                program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
+                    StatementKind::assign(place, sources),
+                    self.cur_span,
+                ));
+            }
+            return;
+        }
         let val_exp = left_op; //todo get rid of val_exp and just use left_op
         if target.is_pathless() {
             let mut fa: Vec<Exp> = [val_exp.clone()].into();
@@ -9381,12 +9551,31 @@ impl<'a> Context<'a> {
     /// Reads the memory part of `ap` into a temporary with [`ctadl_ir::cir::read_into_temp`],
     /// appending the copy to the current block, and returns the temporary plus `ap`'s trailing
     /// offsets.
+    ///
+    /// A path rooted at a places proxy (spec 051) reads every candidate into one temp,
+    /// `t := L1.s, .., Ln.s`.
     fn emit_loads(
         &mut self,
         program: &mut Program,
         scope_view: &ScopeView,
         ap: AccessPath,
     ) -> AccessPath {
+        if let Some(places) = self.proxy_places(&ap) {
+            let sources: Vec<Exp> = places
+                .into_iter()
+                .map(|place| Exp::path(self.emit_loads(program, scope_view, place)))
+                .collect();
+            let temp = VariableRef::new_local_idx(
+                program[scope_view.fidx]
+                    .locals
+                    .get_or_intern(&self.allocator.next_temp()),
+            );
+            program[scope_view.fidx].blocks[scope_view.blidx].push_back(Statement::new(
+                StatementKind::assign(temp.clone(), sources),
+                self.cur_span,
+            ));
+            return AccessPath::from(temp);
+        }
         let mut stmts = Vec::new();
         let allocator = &mut self.allocator;
         let locals = &mut program[scope_view.fidx].locals;
@@ -9879,6 +10068,25 @@ fn is_side_effect_free(node: Node<'_>) -> bool {
     }
     let mut cursor = node.walk();
     node.named_children(&mut cursor).all(is_side_effect_free)
+}
+
+/// Whether a reference initializer names locations a binding can alias (spec 051): through
+/// parentheses, a plain-lvalue shape (a name, member, element or dereference, effects allowed:
+/// they are lowered once), a choice of locations `c ? x : y`, or a call.
+fn names_locations(node: Node<'_>, source: &str) -> bool {
+    let node = unparenthesized_callee(node);
+    match node.kind() {
+        "identifier"
+        | "qualified_identifier"
+        | "field_expression"
+        | "subscript_expression"
+        | "call_expression" => true,
+        "pointer_expression" => node
+            .child_by_field_name("operator")
+            .is_some_and(|op| to_str(&op, source) == "*"),
+        "conditional_expression" => is_location_choice(node, source),
+        _ => false,
+    }
 }
 
 fn is_plain_lvalue(mut node: Node<'_>, source: &str) -> bool {

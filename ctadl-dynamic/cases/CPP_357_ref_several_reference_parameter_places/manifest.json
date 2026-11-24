@@ -1,0 +1,6 @@
+{
+  "name": "CPP_357_ref_several_reference_parameter_places",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `void f(int& x, int& y) { int& r = choose(x, y, 1); r = source(); }`, then `f(x, y); sink(x)`. The candidates are reference cells, copied back at the caller. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

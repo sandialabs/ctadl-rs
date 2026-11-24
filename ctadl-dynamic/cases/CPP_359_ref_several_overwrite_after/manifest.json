@@ -1,0 +1,6 @@
+{
+  "name": "CPP_359_ref_several_overwrite_after",
+  "description": "C++ reference locals bind their locations (spec 051), NEGATIVE: `int& r = choose(x, y, 1); r = source(); x = 0; sink(x)`. A direct strong write after the weak one clears `x`. s=none d=none.",
+  "label": "Test",
+  "expect_flow": false
+}

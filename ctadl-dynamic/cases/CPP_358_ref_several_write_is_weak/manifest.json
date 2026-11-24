@@ -1,0 +1,6 @@
+{
+  "name": "CPP_358_ref_several_write_is_weak",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `int x = source(); int& r = choose(x, y, 0); r = 0; sink(x)`. `r` is `y` at run time, so `x` keeps its taint: the write must be weak. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -5650,3 +5650,147 @@ fn cpp_mvp_declared_object_whose_address_is_taken_is_a_cell() {
     check_receiver_location(&prog, "main", "B::B", "a.deref");
     check_direct_call(&prog, "main", "take", ["a"]);
 }
+
+// ---------------------------------------------------------------------------
+// Spec 051 — reference locals bind the locations their initializer names.
+// ---------------------------------------------------------------------------
+
+/// `%L<i>` for the local `name` of function `func`, as [`render_function`] prints it.
+fn local_operand(prog: &ctadl_ir::cir::Program, func: &str, name: &str) -> String {
+    let fun = prog
+        .functions
+        .iter()
+        .find(|f| f.name == func)
+        .unwrap_or_else(|| panic!("no function {func}"));
+    let index = (0..fun.locals.len() as u32)
+        .find(|&i| fun.locals.name(ctadl_ir::LocalIdx::from(i)) == name)
+        .unwrap_or_else(|| panic!("no local {name} in {func}"));
+    format!("%L{index}")
+}
+
+/// Whether `line` names the operand `operand` (`%L7`, not `%L70`).
+fn names_operand(line: &str, operand: &str) -> bool {
+    line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '%'))
+        .any(|word| word == operand)
+}
+
+/// A reference bound to a call's several places is a places proxy: the binding blends both
+/// candidates into it, and it is the only statement that names the proxy. A write through the
+/// reference is weak on each candidate, and a read blends their current values.
+#[test]
+fn cpp_reference_bound_to_several_places_is_a_places_proxy() {
+    let src = r"
+        int& choose(int& a, int& b, int c) { if (c) return a; return b; }
+        void f(int c) { int x = 0; int y = 0; int& r = choose(x, y, c); r = 5; int v = r; }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    let (x, y, v) = (
+        local_operand(&prog, "f", "x"),
+        local_operand(&prog, "f", "y"),
+        local_operand(&prog, "f", "v"),
+    );
+    let body = render_function(&prog, "f");
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    let blend = format!(" = {x}, {y}");
+    let blends: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|l| l.starts_with("assign %") && l.ends_with(&blend))
+        .collect();
+    assert_eq!(blends.len(), 2, "the binding and the read: {body}");
+    let target = |line: &str| {
+        line["assign ".len()..]
+            .split(' ')
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    let proxy = target(blends[0]);
+    assert_eq!(
+        lines.iter().filter(|l| names_operand(l, &proxy)).count(),
+        1,
+        "only the binding names the proxy {proxy}: {body}"
+    );
+    for candidate in [&x, &y] {
+        let weak = format!("assign {candidate} = <const: \"5\">, {candidate}");
+        assert!(lines.contains(&weak.as_str()), "{weak}: {body}");
+    }
+    let read = format!("assign {v} = {}", target(blends[1]));
+    assert!(lines.contains(&read.as_str()), "{read}: {body}");
+}
+
+/// A method call on a reference to several objects writes the receiver back into each, weakly,
+/// member by member (spec 050's write-back, through the proxy).
+#[test]
+fn cpp_reference_to_several_objects_writes_each_receiver_back_weakly() {
+    let src = r"
+        struct Box { int v; void set(int n) { v = n; } };
+        Box& chooseb(Box& a, Box& b, int c) { if (c) return a; return b; }
+        void f(int c) { Box a{0}; Box b{0}; Box& r = chooseb(a, b, c); r.set(5); }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    let body = render_function(&prog, "f");
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    for object in ["a", "b"] {
+        let object = local_operand(&prog, "f", object);
+        let member = format!("store {object}.v := ");
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with(&member) && l.matches(", ").count() == 1),
+            "a weak member write-back into {object}.v: {body}"
+        );
+    }
+}
+
+/// A reference binds every lvalue `flatten_lvalue` resolves, not only names and members: an
+/// element, a dereference and a parenthesized name are aliases, so a write through the reference
+/// is a write to the referent.
+#[test]
+fn cpp_reference_to_an_element_or_dereference_aliases_it() {
+    let src = r"
+        void f(int* p) { int a[2] = {0, 0}; int x = 0; int& e = a[1]; e = 5; int& d = *p; d = 6; int& n = (x); n = 7; }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    let (a, x) = (
+        local_operand(&prog, "f", "a"),
+        local_operand(&prog, "f", "x"),
+    );
+    let body = render_function(&prog, "f");
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    for expected in [
+        format!("store {a}.[1].deref := <const: \"5\">"),
+        "store @p0.deref := <const: \"6\">".to_string(),
+        format!("assign {x} = <const: \"7\">"),
+    ] {
+        assert!(lines.contains(&expected.as_str()), "{expected}: {body}");
+    }
+}
+
+/// A reference name is scoped like any local: once the reference's block ends, a later `int r`
+/// is a plain local, and writing it does not write the old referent.
+#[test]
+fn cpp_reference_name_is_scoped() {
+    let src = r"
+        void f() { int x = 0; { int& r = x; r = 1; } int r = 0; r = 2; }
+    ";
+    let prog = program_from_cpp_string(src).0;
+    let (x, r) = (
+        local_operand(&prog, "f", "x"),
+        local_operand(&prog, "f", "r"),
+    );
+    let body = render_function(&prog, "f");
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    assert!(
+        lines.contains(&format!("assign {x} = <const: \"1\">").as_str()),
+        "{body}"
+    );
+    assert!(
+        lines.contains(&format!("assign {r} = <const: \"2\">").as_str()),
+        "{body}"
+    );
+    assert!(
+        !lines.contains(&format!("assign {x} = <const: \"2\">").as_str()),
+        "{body}"
+    );
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_356_ref_several_class_method",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `Box& r = chooseb(a, b, 1); r.set(source()); sink(a.v)`. The receiver is copied in from both objects and written back into each, weakly, member by member. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CPP_361_ref_bind_deref",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `int* p = &x; int& r = *p; r = source(); sink(x)`. A dereference initializer is aliased. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

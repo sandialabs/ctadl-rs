@@ -1,0 +1,6 @@
+{
+  "name": "CPP_360_ref_bind_element",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `int a[2]; int& r = a[1]; r = source(); sink(a[1])`. An element initializer is aliased, not copied. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}

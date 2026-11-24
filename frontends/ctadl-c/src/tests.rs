@@ -6464,3 +6464,23 @@ fn the_other_statement_expression_positions_and_the_call_shapes_are_unchanged() 
     let (s, si) = get_summary(prog).unwrap();
     check_flow_in(&s, &si, "f", 1, "", 0, ".[1].deref.f");
 }
+
+/// A statement's own scope ends with it (spec 051): after `for (int i = ..)`, `i` is the outer
+/// `i` again, so the return reads the outer variable, not the loop's.
+#[test]
+fn for_initializer_scope_ends_with_the_loop() {
+    let src = r"
+        int f(void) { int i = 1; for (int i = 0; i < 2; i++) { } return i; }
+    ";
+    let prog = program_from_string(src).0;
+    let fun = prog.functions.iter().find(|f| f.name == "f").expect("f");
+    let outer = (0..fun.locals.len() as u32)
+        .find(|&i| fun.locals.name(ctadl_ir::LocalIdx::from(i)) == "i")
+        .expect("the outer i");
+    let body = render_function(&prog, "f");
+    assert!(
+        body.lines()
+            .any(|l| l.trim() == format!("return %L{outer}")),
+        "{body}"
+    );
+}

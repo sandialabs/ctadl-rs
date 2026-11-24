@@ -1,0 +1,6 @@
+{
+  "name": "CPP_354_ref_several_member_places",
+  "description": "C++ reference locals bind their locations (spec 051), POSITIVE: `int& r = argc > 0 ? a.v : b.v; r = source(); sink(a.v)`. Member candidates. s=flow d=flow.",
+  "label": "Test",
+  "expect_flow": true
+}
