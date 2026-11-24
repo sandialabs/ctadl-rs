@@ -18,9 +18,9 @@ use ctadl_frontends::budget::DEFAULT_MAX_CORES;
 pub struct Cli {
     /// Directory to use as the CTADL store. When set, this directory is used
     /// directly as the store root; unlike `XDG_STATE_HOME`, no `ctadl`
-    /// subdirectory is appended. When omitted, the store defaults to
-    /// `$XDG_STATE_HOME/ctadl`.
-    #[arg(long, global = true, value_name = "DIR")]
+    /// subdirectory is appended. When omitted, the store is `$CTADL_STORE` if
+    /// that is set and non-empty, else `$XDG_STATE_HOME/ctadl`.
+    #[arg(long, global = true, value_name = "DIR", env = "CTADL_STORE")]
     pub store: Option<PathBuf>,
 
     #[command(subcommand)]

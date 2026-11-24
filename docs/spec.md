@@ -227,7 +227,7 @@ notifications report on the run itself. `--sarif-profile` (`human`, `agent`, `ma
 
 ### 4.6 Storage
 
-The store, under `$XDG_STATE_HOME` by default, holds `imports/` and `projects/`. An import is
+The store, `--store`, else `$CTADL_STORE`, else `$XDG_STATE_HOME/ctadl`, holds `imports/` and `projects/`. An import is
 IR and VMT (`bitcode`) plus source info (parquet), stamped with a format version. A project
 holds its import list, index configuration, and index facts and summaries (parquet,
 inspectable with DuckDB; see [debugging.md](debugging.md)).
