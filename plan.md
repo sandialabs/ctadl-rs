@@ -450,6 +450,19 @@ with the two callees' function ids in opposite orders. Tests only.
 `grep -n 'with_step_props\|step_props:' ctadl-ascent/tests/integration/diff_query.rs` finds
 nothing; `grep -rn 'cli::query(' ctadl-ascent/tests/integration` finds `common.rs` only.
 
+**As built.**
+- `ties.c` has no step with a `callee`: each of its interior steps is summarized. So
+  `endpoints_only` and `changed_step_property` also run on the unedited
+  `funcptr_one_frame_down.tnt`, whose middle step enters one of two callees. Each test fails
+  unless every edit (the `taintVertex`, the `callee`, a removed `summarized`) ran somewhere.
+- `bases()` and its one-element array are removed. The tests of `ties.c` alone use
+  `base(profile)`, and the two tests of step properties use `step_bases()`. `query_all` takes
+  the model files.
+- `next_formal` parses a formal as `i64`: a `ties.c` flow's first step is a return vertex
+  such as `call-arg(7, -1)`.
+- The pad worked as written. Alone, `get_a` is 2 and `get_b` is 3. After the pad, `get_b` is
+  1 and `get_a` is 2. The opposite-order assertion was seen to fail with the pad reordered.
+
 ## Phase 7: documents and acceptance (R20)
 
 Depends on: 2, 6.
