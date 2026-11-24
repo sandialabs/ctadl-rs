@@ -252,6 +252,15 @@ files with a step `summarized`; `ctadl query` writes none before phase 5.
 **Gate.** `cargo fmt --all -- --check`; `cargo clippy --workspace -- -Dwarnings`;
 `cargo test --workspace`; `git diff --stat <phase 1 commit> -- sarif-canon` is empty.
 
+**As built.**
+- `summarized` is read by a new `step_flag`, beside `step_prop`.
+- `parse.rs`'s own tests also cover the bad values and that `summarized` is a kept field
+  (`bad_inputs_error`, `kept_fields_matter`).
+- The malformed-value tests check for an error that names `summarized`, as the existing ones
+  do. `main.rs` turns every such error into exit 2.
+- `endpoints_only_reads_first_and_last` uses a second base whose last step has a `callee`,
+  so a changed `callee` on the last step can be tested.
+
 ## Phase 5: `ctadl query` writes step properties (R1–R5, R7, R8, R18, R19, D1)
 
 Depends on: 3.
