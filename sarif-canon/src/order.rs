@@ -58,6 +58,20 @@ pub open spec fn ord_opt_i64(x: Option<i64>, y: Option<i64>) -> Ordering {
     ord_option(|a: i64, b: i64| ord_int(a as int, b as int), x, y)
 }
 
+/// `false` before `true`.
+pub open spec fn ord_bool(x: bool, y: bool) -> Ordering {
+    match (x, y) {
+        (false, true) => Ordering::Less,
+        (true, false) => Ordering::Greater,
+        _ => Ordering::Equal,
+    }
+}
+
+/// `None`, then `Some(false)`, then `Some(true)`.
+pub open spec fn ord_opt_bool(x: Option<bool>, y: Option<bool>) -> Ordering {
+    ord_option(|a: bool, b: bool| ord_bool(a, b), x, y)
+}
+
 pub open spec fn ord_opt_atom<A>(oa: spec_fn(A, A) -> Ordering, x: Option<A>, y: Option<A>) -> Ordering {
     ord_option(oa, x, y)
 }
@@ -172,7 +186,10 @@ pub open spec fn ord_step<A>(oa: spec_fn(A, A) -> Ordering) -> spec_fn(CanonStep
             lex(oa, x.kinds, y.kinds),
             then(
                 ord_option(ord_location(oa), x.location, y.location),
-                then(ord_opt_atom(oa, x.vertex, y.vertex), ord_opt_atom(oa, x.callee, y.callee)),
+                then(
+                    ord_opt_atom(oa, x.vertex, y.vertex),
+                    then(ord_opt_atom(oa, x.callee, y.callee), ord_opt_bool(x.summarized, y.summarized)),
+                ),
             ),
         )
 }
@@ -245,6 +262,10 @@ pub open spec fn ord_i64() -> spec_fn(i64, i64) -> Ordering {
     |a: i64, b: i64| ord_int(a as int, b as int)
 }
 
+pub open spec fn ord_bool_fn() -> spec_fn(bool, bool) -> Ordering {
+    |a: bool, b: bool| ord_bool(a, b)
+}
+
 pub open spec fn ord_opt<T>(ord: spec_fn(T, T) -> Ordering) -> spec_fn(Option<T>, Option<T>) -> Ordering {
     |x: Option<T>, y: Option<T>| ord_option(ord, x, y)
 }
@@ -267,6 +288,21 @@ proof fn lemma_strict_i64()
     let o = ord_i64();
     assert forall|x: i64, y: i64| #[trigger] o(x, y) == Ordering::Equal <==> x == y by {}
     assert forall|x: i64, y: i64, z: i64| #[trigger] le(o, x, y) && #[trigger] le(o, y, z) implies le(
+        o,
+        x,
+        z,
+    ) by {}
+}
+
+proof fn lemma_strict_bool()
+    ensures
+        strict(ord_bool_fn()),
+{
+    let o = ord_bool_fn();
+    assert forall|x: bool, y: bool| #[trigger] o(x, y) == Ordering::Equal <==> x == y by {}
+    assert forall|x: bool, y: bool| (#[trigger] o(x, y) == Ordering::Less) <==> o(y, x)
+        == Ordering::Greater by {}
+    assert forall|x: bool, y: bool, z: bool| #[trigger] le(o, x, y) && #[trigger] le(o, y, z) implies le(
         o,
         x,
         z,
@@ -518,12 +554,22 @@ pub proof fn lemma_ord_step<A>(oa: spec_fn(A, A) -> Ordering)
     lemma_strict_opt(ord_location(oa));
     lemma_strict_opt(oa);
     lemma_strict_lex(oa);
-    let (ol, o1) = (ord_opt(ord_location(oa)), ord_opt(oa));
-    lemma_strict_pair(o1, o1);
-    lemma_strict_pair(ol, ord_pair(o1, o1));
-    lemma_strict_pair(lex_ord(oa), ord_pair(ol, ord_pair(o1, o1)));
-    let key = |x: CanonStepV<A>| (x.kinds, (x.location, (x.vertex, x.callee)));
-    lemma_pull(ord_pair(lex_ord(oa), ord_pair(ol, ord_pair(o1, o1))), key, ord_step(oa));
+    lemma_strict_bool();
+    lemma_strict_opt(ord_bool_fn());
+    let (ol, o1, ob) = (ord_opt(ord_location(oa)), ord_opt(oa), ord_opt(ord_bool_fn()));
+    lemma_strict_pair(o1, ob);
+    lemma_strict_pair(o1, ord_pair(o1, ob));
+    lemma_strict_pair(ol, ord_pair(o1, ord_pair(o1, ob)));
+    lemma_strict_pair(lex_ord(oa), ord_pair(ol, ord_pair(o1, ord_pair(o1, ob))));
+    let o = ord_pair(lex_ord(oa), ord_pair(ol, ord_pair(o1, ord_pair(o1, ob))));
+    let key = |x: CanonStepV<A>| (x.kinds, (x.location, (x.vertex, (x.callee, x.summarized))));
+    assert forall|x: CanonStepV<A>, y: CanonStepV<A>| #[trigger] ord_step(oa)(x, y) == o(
+        key(x),
+        key(y),
+    ) by {
+        assert(ord_opt_bool(x.summarized, y.summarized) == ob(x.summarized, y.summarized));
+    }
+    lemma_pull(o, key, ord_step(oa));
 }
 
 pub proof fn lemma_ord_thread_flow<A>(oa: spec_fn(A, A) -> Ordering)
@@ -571,6 +617,65 @@ pub proof fn lemma_ord_code_flow<A>(oa: spec_fn(A, A) -> Ordering)
     lemma_pull(lex_ord(ord_thread_flow(oa)), key, ord_code_flow(oa));
 }
 
+/// A result's fields, in declaration order, as nested pairs.
+pub type ResultKey<A> = (Option<A>, (A, (A, (Seq<CanonLocationV<A>>, (Seq<CanonCodeFlowV<A>>, PropsV<A>)))));
+
+pub open spec fn result_key<A>() -> spec_fn(CanonResultV<A>) -> ResultKey<A> {
+    |x: CanonResultV<A>| (x.rule, (x.kind, (x.level, (x.locations, (x.code_flows, x.props)))))
+}
+
+/// The order on `ResultKey`: each field by its own order, as `ord_result` compares them.
+pub open spec fn ord_result_key<A>(oa: spec_fn(A, A) -> Ordering) -> spec_fn(
+    ResultKey<A>,
+    ResultKey<A>,
+) -> Ordering {
+    let (ol, oc, op) = (lex_ord(ord_location(oa)), lex_ord(ord_code_flow(oa)), ord_props(oa));
+    ord_pair(ord_opt(oa), ord_pair(oa, ord_pair(oa, ord_pair(ol, ord_pair(oc, op)))))
+}
+
+proof fn lemma_strict_result_key<A>(oa: spec_fn(A, A) -> Ordering)
+    requires
+        total_order(oa),
+        equal_means_eq(oa),
+    ensures
+        strict(ord_result_key(oa)),
+{
+    lemma_strict_result_fields(oa);
+    lemma_strict_opt(oa);
+    let (ol, oc, op) = (lex_ord(ord_location(oa)), lex_ord(ord_code_flow(oa)), ord_props(oa));
+    lemma_strict_pair(oc, op);
+    lemma_strict_pair(ol, ord_pair(oc, op));
+    lemma_strict_pair(oa, ord_pair(ol, ord_pair(oc, op)));
+    lemma_strict_pair(oa, ord_pair(oa, ord_pair(ol, ord_pair(oc, op))));
+    lemma_strict_pair(ord_opt(oa), ord_pair(oa, ord_pair(oa, ord_pair(ol, ord_pair(oc, op)))));
+}
+
+/// The orders on a result's sequence and record fields keep `strict`.
+proof fn lemma_strict_result_fields<A>(oa: spec_fn(A, A) -> Ordering)
+    requires
+        total_order(oa),
+        equal_means_eq(oa),
+    ensures
+        strict(lex_ord(ord_location(oa))),
+        strict(lex_ord(ord_code_flow(oa))),
+        strict(ord_props(oa)),
+{
+    lemma_ord_location(oa);
+    lemma_ord_code_flow(oa);
+    lemma_ord_props(oa);
+    lemma_strict_lex(ord_location(oa));
+    lemma_strict_lex(ord_code_flow(oa));
+}
+
+/// `ord_result` is `ord_result_key` through `result_key`. Proved with no order law in context,
+/// since those laws make the unfolded comparisons costly.
+proof fn lemma_ord_result_by_key<A>(oa: spec_fn(A, A) -> Ordering)
+    ensures
+        forall|x: CanonResultV<A>, y: CanonResultV<A>| #[trigger]
+            ord_result(oa)(x, y) == ord_result_key(oa)(result_key()(x), result_key()(y)),
+{
+}
+
 pub proof fn lemma_ord_result<A>(oa: spec_fn(A, A) -> Ordering)
     requires
         total_order(oa),
@@ -579,22 +684,9 @@ pub proof fn lemma_ord_result<A>(oa: spec_fn(A, A) -> Ordering)
         total_order(ord_result(oa)),
         equal_means_eq(ord_result(oa)),
 {
-    lemma_ord_location(oa);
-    lemma_ord_code_flow(oa);
-    lemma_ord_props(oa);
-    lemma_strict_opt(oa);
-    lemma_strict_lex(ord_location(oa));
-    lemma_strict_lex(ord_code_flow(oa));
-    let (ol, oc, op) = (lex_ord(ord_location(oa)), lex_ord(ord_code_flow(oa)), ord_props(oa));
-    lemma_strict_pair(oc, op);
-    lemma_strict_pair(ol, ord_pair(oc, op));
-    lemma_strict_pair(oa, ord_pair(ol, ord_pair(oc, op)));
-    lemma_strict_pair(oa, ord_pair(oa, ord_pair(ol, ord_pair(oc, op))));
-    lemma_strict_pair(ord_opt(oa), ord_pair(oa, ord_pair(oa, ord_pair(ol, ord_pair(oc, op)))));
-    let o = ord_pair(ord_opt(oa), ord_pair(oa, ord_pair(oa, ord_pair(ol, ord_pair(oc, op)))));
-    let key = |x: CanonResultV<A>|
-        (x.rule, (x.kind, (x.level, (x.locations, (x.code_flows, x.props)))));
-    lemma_pull(o, key, ord_result(oa));
+    lemma_strict_result_key(oa);
+    lemma_ord_result_by_key(oa);
+    lemma_pull(ord_result_key(oa), result_key(), ord_result(oa));
 }
 
 /// The order on results as the code holds them: total, and `Equal` exactly when the views are
@@ -665,6 +757,26 @@ fn cmp_opt_i64(x: &Option<i64>, y: &Option<i64>) -> (o: Ordering)
             if *a < *b {
                 Ordering::Less
             } else if *a > *b {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        },
+    }
+}
+
+fn cmp_opt_bool(x: &Option<bool>, y: &Option<bool>) -> (o: Ordering)
+    ensures
+        o == ord_opt_bool(*x, *y),
+{
+    match (x, y) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (Some(a), Some(b)) => {
+            if !*a && *b {
+                Ordering::Less
+            } else if *a && !*b {
                 Ordering::Greater
             } else {
                 Ordering::Equal
@@ -1255,7 +1367,11 @@ pub fn cmp_step<A, F: Fn(&A, &A) -> Ordering>(
     if !is_equal(c) {
         return c;
     }
-    cmp_opt_atom(&x.callee, &y.callee, cmp, Ghost(oa))
+    let c = cmp_opt_atom(&x.callee, &y.callee, cmp, Ghost(oa));
+    if !is_equal(c) {
+        return c;
+    }
+    cmp_opt_bool(&x.summarized, &y.summarized)
 }
 
 pub fn cmp_thread_flow<A, F: Fn(&A, &A) -> Ordering>(
@@ -1384,7 +1500,13 @@ mod tests {
         Option<u32>,
     );
     type MLocation = (Option<MPhysical>, Vec<u32>);
-    type MStep = (Vec<u32>, Option<MLocation>, Option<u32>, Option<u32>);
+    type MStep = (
+        Vec<u32>,
+        Option<MLocation>,
+        Option<u32>,
+        Option<u32>,
+        Option<bool>,
+    );
 
     #[derive(PartialEq, Eq, PartialOrd, Ord)]
     enum MThreadFlow {
@@ -1434,6 +1556,7 @@ mod tests {
             s.location.as_ref().map(m_location),
             s.vertex,
             s.callee,
+            s.summarized,
         )
     }
 
@@ -1546,6 +1669,7 @@ mod tests {
                 location: self.opt(Self::location),
                 vertex: self.opt(Self::atom),
                 callee: self.opt(Self::atom),
+                summarized: self.opt(|g| g.next(2) == 0),
             }
         }
 
@@ -1615,7 +1739,7 @@ mod tests {
                 _ => {
                     // Change one top-level field, or a step's property, of a copy.
                     let mut y = x.clone();
-                    match g.next(8) {
+                    match g.next(9) {
                         0 => y.rule = g.opt(Gen::atom),
                         1 => y.kind = g.atom(),
                         2 => y.level = g.atom(),
@@ -1627,9 +1751,14 @@ mod tests {
                                 s.vertex = g.opt(Gen::atom);
                             }
                         }
-                        _ => {
+                        7 => {
                             if let Some(s) = last_step(&mut y) {
                                 s.callee = g.opt(Gen::atom);
+                            }
+                        }
+                        _ => {
+                            if let Some(s) = last_step(&mut y) {
+                                s.summarized = g.opt(|g| g.next(2) == 0);
                             }
                         }
                     }

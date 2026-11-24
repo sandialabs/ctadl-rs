@@ -73,6 +73,9 @@ pub fn resolve_paths(spec_path: &Path, spec: &CaseSpec) -> (Option<PathBuf>, Pat
 
 pub fn check_sarif(spec: &CaseSpec, sarif: &Path) -> Result<Outcome> {
     let has_flow = assertions::codeflow_connects_source_and_sink(sarif)?;
+    if let Some(why) = assertions::check_step_properties(sarif)? {
+        return Ok(Outcome::Fail(why));
+    }
     match (spec.expect_flow, has_flow) {
         (true, true) | (false, false) => Ok(Outcome::Pass),
         (true, false) => Ok(Outcome::Fail(

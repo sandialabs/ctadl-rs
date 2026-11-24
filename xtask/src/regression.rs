@@ -1297,6 +1297,9 @@ fn run_jvm(case_name: &str, java: &Path, config: &Path, models: &Path) -> Result
 ///     the union of the code-flow lines and the tainted-instruction lines.
 ///  3. *Unexpected lines*: no `unexpected_lines` entry is among the reached lines.
 ///
+/// Every step of every code flow must also say what it should
+/// ([`assertions::check_step_properties`]), in a negative case too.
+///
 /// No DEX or JVM case uses `unexpected_lines` today. [`check_jni_case`] does, and
 /// narrows step 3 to the traced lines for the reason spelled out in [`ReachedLines`].
 fn check_flow_case(
@@ -1308,6 +1311,9 @@ fn check_flow_case(
     let expected = assertions::read_expected_lines(config)?;
     let unexpected = assertions::read_unexpected_lines(config)?;
     let connects = assertions::codeflow_connects_source_and_sink(human_sarif)?;
+    if let Some(why) = assertions::check_step_properties(human_sarif)? {
+        return Ok(Outcome::Fail(why));
+    }
 
     if expected.is_empty() {
         // Negative case: there must be no traced source -> sink flow. (No reached-line
@@ -1655,6 +1661,9 @@ fn run_lua(name: &str, source: &Path, query: &Path, models: &Path) -> Result<Out
 
     let expected = assertions::read_expected_lines(query)?;
     let connects = assertions::codeflow_connects_source_and_sink(&sarif)?;
+    if let Some(why) = assertions::check_step_properties(&sarif)? {
+        return Ok(Outcome::Fail(why));
+    }
 
     if expected.is_empty() {
         // Negative case: there must be no traced source -> sink flow.
@@ -1881,6 +1890,9 @@ fn check_pcode_case(
     // regardless of whether any flow was actually traced. A negative case inverts
     // it: no such flow may exist.
     let connects = assertions::codeflow_connects_source_and_sink(sarif)?;
+    if let Some(why) = assertions::check_step_properties(sarif)? {
+        return Ok(Outcome::Fail(why));
+    }
     if expected.is_empty() {
         return Ok(if connects {
             Outcome::Fail(
@@ -2539,6 +2551,9 @@ fn check_jni_case(
 ) -> Result<Outcome> {
     let expected = assertions::read_expected_lines(config)?;
     let connects = assertions::codeflow_connects_source_and_sink(human_sarif)?;
+    if let Some(why) = assertions::check_step_properties(human_sarif)? {
+        return Ok(Outcome::Fail(why));
+    }
 
     if expected.is_empty() {
         return Ok(if connects {
@@ -2666,6 +2681,9 @@ fn run_c(name: &str, source: &Path, query: &Path, models: &Path) -> Result<Outco
     // `check_flow_case`): a code flow must connect a source to a sink. A negative
     // case inverts it -- no such flow may exist.
     let connects = assertions::codeflow_connects_source_and_sink(&sarif)?;
+    if let Some(why) = assertions::check_step_properties(&sarif)? {
+        return Ok(Outcome::Fail(why));
+    }
     if expected.is_empty() {
         return Ok(if connects {
             Outcome::Fail(

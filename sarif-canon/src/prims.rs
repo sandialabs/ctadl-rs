@@ -520,7 +520,13 @@ pub fn copy_step<A: Copy>(s: &CanonStep<A>) -> (r: CanonStep<A>)
         Some(l) => Some(copy_location(l)),
         None => None,
     };
-    CanonStep { kinds: copy_atoms(&s.kinds), location, vertex: s.vertex, callee: s.callee }
+    CanonStep {
+        kinds: copy_atoms(&s.kinds),
+        location,
+        vertex: s.vertex,
+        callee: s.callee,
+        summarized: s.summarized,
+    }
 }
 
 fn copy_location<A: Copy>(l: &CanonLocation<A>) -> (r: CanonLocation<A>)
@@ -835,6 +841,7 @@ mod tests {
             }),
             vertex: None,
             callee: None,
+            summarized: None,
         }
     }
 

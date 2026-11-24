@@ -65,6 +65,7 @@ pub open spec fn spec_canon_step<A>(
                 location: None,
                 vertex: s.vertex,
                 callee: s.callee,
+                summarized: s.summarized,
             },
         ),
         Some(l) => match spec_canon_location(oa, t, l) {
@@ -74,6 +75,7 @@ pub open spec fn spec_canon_step<A>(
                     location: Some(c),
                     vertex: s.vertex,
                     callee: s.callee,
+                    summarized: s.summarized,
                 },
             ),
             Err(e) => Err(e),
@@ -771,6 +773,7 @@ fn canon_step<A: Copy, F: Fn(&A, &A) -> Ordering>(
             location,
             vertex: s.vertex,
             callee: s.callee,
+            summarized: s.summarized,
         },
     )
 }

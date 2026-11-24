@@ -217,6 +217,86 @@ pub fn codeflow_connects_source_and_sink(sarif: &Path) -> Result<bool> {
     Ok(false)
 }
 
+/// Known-answer check of every code-flow step of a SARIF document: what is wrong with the
+/// first step that does not say what it should, naming its result and its place in the flow,
+/// or `None` when every step does.
+///
+/// A step has a string `properties.taintVertex`, and its message is
+/// `<word> <taintVertex> in <function>`. A source or sink step, told by its message's first
+/// word as [`codeflow_connects_source_and_sink`] tells them, has neither `callee` nor
+/// `summarized`; every other step has exactly one: `callee`, a string, or `summarized`,
+/// `true`.
+pub fn check_step_properties(sarif: &Path) -> Result<Option<String>> {
+    Ok(first_bad_step(&read_json(sarif)?))
+}
+
+/// [`check_step_properties`] on a parsed document.
+fn first_bad_step(doc: &Value) -> Option<String> {
+    let all = |v: &Value, key: &str| -> Vec<Value> {
+        v.get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    for (r, run) in all(doc, "runs").iter().enumerate() {
+        for (n, result) in all(run, "results").iter().enumerate() {
+            let rule = result.get("ruleId").and_then(Value::as_str).unwrap_or("");
+            for (c, flow) in all(result, "codeFlows").iter().enumerate() {
+                for (t, thread) in all(flow, "threadFlows").iter().enumerate() {
+                    for (s, step) in all(thread, "locations").iter().enumerate() {
+                        let message = step
+                            .pointer("/location/message/text")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if let Some(problem) = step_problem(step, message) {
+                            return Some(format!(
+                                "run {r}, result {n} ({rule}), code flow {c}, thread flow {t}, \
+                                 step {s} ({message:?}): {problem}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// What is wrong with one step whose message is `message`, or `None`.
+fn step_problem(step: &Value, message: &str) -> Option<String> {
+    let props = step.get("properties");
+    let prop = |key: &str| props.and_then(|p| p.get(key));
+    let Some(vertex) = prop("taintVertex").and_then(Value::as_str) else {
+        return Some("no string taintVertex".to_string());
+    };
+    let Some((word, rest)) = message.split_once(' ') else {
+        return Some("the message has no vertex".to_string());
+    };
+    if !rest
+        .strip_prefix(vertex)
+        .is_some_and(|tail| tail.starts_with(" in "))
+    {
+        return Some(format!(
+            "the message does not name taintVertex {vertex:?} as `{word} {vertex} in ...`"
+        ));
+    }
+    let callee = prop("callee");
+    let summarized = prop("summarized");
+    if matches!(word, "source" | "sink") {
+        if callee.is_some() || summarized.is_some() {
+            return Some(format!("a {word} step has callee or summarized"));
+        }
+        return None;
+    }
+    match (callee, summarized) {
+        (Some(Value::String(_)), None) | (None, Some(Value::Bool(true))) => None,
+        (Some(_), Some(_)) => Some("both callee and summarized".to_string()),
+        (None, None) => Some("neither callee nor summarized".to_string()),
+        (Some(c), None) => Some(format!("callee {c} is not a string")),
+        (None, Some(s)) => Some(format!("summarized {s} is not true")),
+    }
+}
+
 /// The functions whose sinks a connected code flow ends in: for every thread flow that
 /// has a source step, the function the last sink step names
 /// (`sink call-arg(22, 0) in <function>`).
@@ -404,4 +484,66 @@ fn read_config(path: &Path) -> Result<Value> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
     json5::from_str(&text).with_context(|| format!("failed to parse config {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_bad_step;
+    use serde_json::{Value, json};
+
+    /// One flow: a call step, a summarized step and a sink step, each as `ctadl query` writes
+    /// it.
+    fn flow() -> Value {
+        let step = |message: &str, props: Value| json!({ "location": { "message": { "text": message } }, "properties": props });
+        json!({ "runs": [{ "results": [{
+            "ruleId": "C0001.tainted-path",
+            "codeFlows": [{ "threadFlows": [{ "locations": [
+                step("call call-arg(3, 1) in get_a",
+                     json!({ "taintVertex": "call-arg(3, 1)", "callee": "get_a" })),
+                step("call call-arg(5, 0).bar in A",
+                     json!({ "taintVertex": "call-arg(5, 0).bar", "summarized": true })),
+                step("sink call-arg(7, 0) in sink_a",
+                     json!({ "taintVertex": "call-arg(7, 0)" })),
+            ]}]}],
+        }]}]})
+    }
+
+    fn props(doc: &mut Value, step: usize) -> &mut serde_json::Map<String, Value> {
+        doc.pointer_mut(&format!(
+            "/runs/0/results/0/codeFlows/0/threadFlows/0/locations/{step}/properties"
+        ))
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+    }
+
+    #[test]
+    fn check_step_properties_accepts_what_query_writes() {
+        assert_eq!(first_bad_step(&flow()), None);
+    }
+
+    #[test]
+    fn check_step_properties_rejects_a_bad_step() {
+        let edits: [(&str, fn(&mut Value)); 4] = [
+            ("a call step given summarized too", |d| {
+                props(d, 0).insert("summarized".into(), Value::Bool(true));
+            }),
+            ("a call step with its callee removed", |d| {
+                props(d, 0).remove("callee");
+            }),
+            ("a sink step given a callee", |d| {
+                props(d, 2).insert("callee".into(), json!("sink_a"));
+            }),
+            ("a step whose taintVertex is changed", |d| {
+                props(d, 1).insert("taintVertex".into(), json!("call-arg(5, 0).baz"));
+            }),
+        ];
+        for (what, edit) in edits {
+            let mut doc = flow();
+            edit(&mut doc);
+            assert_ne!(doc, flow(), "{what}: the edit changed nothing");
+            let problem = first_bad_step(&doc);
+            assert!(problem.is_some(), "{what}: not reported");
+        }
+    }
 }

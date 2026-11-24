@@ -38,7 +38,7 @@ fn run(case: &str, query: &str) -> serde_json::Value {
         AnalysisProject::try_create(case, &[case.to_string()], SubImports::All).expect("project");
     cli::index(&project, &[], &[], true, cli::IndexOptions::default()).expect("indexing");
     let sarif = dir.join("out.sarif");
-    cli::query(&project, &[models], &sarif, SarifProfile::Human, None).expect("querying");
+    crate::common::query(&project, &[models], &sarif, SarifProfile::Human, None).expect("querying");
     serde_json::from_str(&std::fs::read_to_string(&sarif).unwrap()).unwrap()
 }
 

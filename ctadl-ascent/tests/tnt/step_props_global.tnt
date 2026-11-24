@@ -1,0 +1,26 @@
+// A callee writes its argument to a global, which the caller reads after the call and passes
+// to a sink. The query crosses the call to `put` by its effect on the global without entering
+// `put`. The sink is on `snk`'s formal, so it is anchored at the call to `snk` and the flow has
+// a step there too.
+var g;
+
+def put(v) {
+start:
+  g.deref = v;
+  return;
+}
+
+def snk(c) {
+start:
+  sink(c, Secret);
+  return;
+}
+
+def main() {
+start:
+  x = source(Secret);
+  put(x);
+  y = g.deref;
+  snk(y);
+  return;
+}

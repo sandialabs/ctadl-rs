@@ -89,10 +89,10 @@ pub enum Command {
     ///
     /// Use this to check whether two query runs found the same things. The results of every run
     /// in a file are compared as one multiset. The steps of a thread flow are compared in order,
-    /// each by its kinds, its location, and its `taintVertex` and `callee` properties when present
-    /// (`ctadl query` does not write these yet). The execution notifications of every invocation
-    /// are compared as one multiset, each by all it holds but its message text and arguments; so
-    /// are the invocations, each by `executionSuccessful` and `exitCode`. Run metadata, tool,
+    /// each by its kinds, its location, and its `taintVertex`, `callee` and `summarized`
+    /// properties. The execution notifications of every invocation are compared as one
+    /// multiset, each by all it holds but its message text and arguments; so are the
+    /// invocations, each by `executionSuccessful` and `exitCode`. Run metadata, tool,
     /// rules, configuration notifications, the rest of an invocation and message text are not
     /// compared, nor the order of anything SARIF leaves unordered (results, notifications,
     /// locations, code flows, thread flows, set- and map-valued properties), nor numbers that are
@@ -107,8 +107,9 @@ pub enum Command {
     ///
     /// Exits 0 when results, notifications and invocations are all the same, 1 when any differ,
     /// and 2 on an error: an unreadable file, malformed SARIF, a step `taintVertex` or `callee`
-    /// that is not a string, or a result with no canonical form (a logical location index out of
-    /// range, a thread flow with no steps, or `executionOrder` values that do not increase).
+    /// that is not a string, a step `summarized` that is not a boolean, or a result with no
+    /// canonical form (a logical location index out of range, a thread flow with no steps, or
+    /// `executionOrder` values that do not increase).
     /// Neither `--limit` nor `--json` changes the exit code.
     DiffQuery(DiffQueryArgs),
 

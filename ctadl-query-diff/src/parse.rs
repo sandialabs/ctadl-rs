@@ -227,6 +227,23 @@ fn step(s: &sarif::ThreadFlowLocation, atoms: &mut Atoms) -> Result<RawStep<u32>
             .transpose()?,
         vertex: step_prop(s, "taintVertex", atoms, without_call_site)?,
         callee: step_prop(s, "callee", atoms, as_is)?,
+        summarized: step_flag(s, "summarized")?,
+    })
+}
+
+/// The step property `key`, a boolean; `None` when the step has no such property.
+fn step_flag(s: &sarif::ThreadFlowLocation, key: &'static str) -> Result<Option<bool>, Error> {
+    let Some(v) = s
+        .properties
+        .as_ref()
+        .and_then(|b| b.additional_properties.get(key))
+    else {
+        return Ok(None);
+    };
+    v.as_bool().map(Some).ok_or(Error::Property {
+        key,
+        expected: "a boolean",
+        on_step: true,
     })
 }
 
@@ -723,6 +740,7 @@ mod tests {
                                     location: Some(logical_only(0)),
                                     vertex: Some(a("call-arg(_, 0).f")),
                                     callee: Some(a("snk")),
+                                    summarized: None,
                                 },
                                 RawStep {
                                     order: Some(2),
@@ -742,6 +760,7 @@ mod tests {
                                     }),
                                     vertex: None,
                                     callee: Some(a("snk2")),
+                                    summarized: None,
                                 },
                                 RawStep {
                                     order: Some(3),
@@ -749,6 +768,7 @@ mod tests {
                                     location: None,
                                     vertex: None,
                                     callee: None,
+                                    summarized: None,
                                 },
                             ],
                         }],
@@ -884,6 +904,7 @@ mod tests {
             ),
             (format!("{tf}/0/properties/callee"), json!("snk3")),
             (format!("{tf}/1/properties/callee"), json!("snk3")),
+            (format!("{tf}/1/properties/summarized"), json!(true)),
             (format!("{props}/taintLabels/0"), json!("M")),
             (format!("{props}/taintVertices/L/1"), json!("local(y)")),
             (
@@ -1040,6 +1061,25 @@ mod tests {
         assert_eq!(parse(&removed, &mut atoms).unwrap(), base);
     }
 
+    /// A step's `summarized` is read as the boolean it is; a step without it has `None`.
+    #[test]
+    fn step_summarized() {
+        let tf = format!("{FIRST}/codeFlows/0/threadFlows/0/locations");
+        let summarized = |d: &Value| -> Vec<Option<bool>> {
+            let parsed = parse(d, &mut Atoms::new()).unwrap();
+            parsed.runs[0].results[0].code_flows[0].thread_flows[0]
+                .steps
+                .iter()
+                .map(|s| s.summarized)
+                .collect()
+        };
+        assert_eq!(summarized(&doc()), [None, None, None]);
+        for b in [true, false] {
+            let d = edit(&[(&format!("{tf}/1/properties/summarized"), json!(b))]);
+            assert_eq!(summarized(&d), [None, Some(b), None], "{b}");
+        }
+    }
+
     #[test]
     fn kind_level_defaults() {
         let mut atoms = Atoms::new();
@@ -1120,7 +1160,14 @@ mod tests {
             }
         }
         let tf = format!("{FIRST}/codeFlows/0/threadFlows/0/locations");
-        for (key, value) in [("taintVertex", json!(["x"])), ("callee", json!(3))] {
+        for (key, value, expected) in [
+            ("taintVertex", json!(["x"]), "a string"),
+            ("callee", json!(3), "a string"),
+            ("summarized", json!("true"), "a boolean"),
+            ("summarized", json!(1), "a boolean"),
+            ("summarized", json!(null), "a boolean"),
+        ] {
+            let what = format!("step {key} {value}");
             let bad = edit(&[(&format!("{tf}/0/properties/{key}"), value)]);
             match parse(&bad, &mut atoms) {
                 Err(
@@ -1128,14 +1175,14 @@ mod tests {
                         key: k, on_step, ..
                     },
                 ) => {
-                    assert_eq!(k, key);
-                    assert!(on_step, "{key}");
+                    assert_eq!(k, key, "{what}");
+                    assert!(on_step, "{what}");
                     assert_eq!(
                         e.to_string(),
-                        format!("step property `{key}` is not a string")
+                        format!("step property `{key}` is not {expected}")
                     );
                 }
-                other => panic!("step {key}: {other:?}"),
+                other => panic!("{what}: {other:?}"),
             }
         }
         assert!(matches!(
