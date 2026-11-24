@@ -250,7 +250,7 @@ fn summary_project_notifications_reach_the_app_and_its_sarif() {
     );
 
     let sarif = store_dir().join("notes_app.sarif");
-    cli::query(&app, &[], &sarif, SarifProfile::default(), None).expect("querying");
+    crate::common::query(&app, &[], &sarif, SarifProfile::default(), None).expect("querying");
     let doc: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&sarif).expect("reading sarif"))
             .expect("parsing sarif");
@@ -319,7 +319,7 @@ fn zero_assignment_calls_are_reported() {
     }
 
     let sarif = store_dir().join("zero_calls.sarif");
-    cli::query(&project, &[], &sarif, SarifProfile::default(), None).expect("querying");
+    crate::common::query(&project, &[], &sarif, SarifProfile::default(), None).expect("querying");
     let doc: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&sarif).expect("reading sarif"))
             .expect("parsing sarif");

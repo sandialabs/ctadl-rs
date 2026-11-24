@@ -1,0 +1,48 @@
+// One indirect call site that resolves to two targets, `get_a` and `get_b`, as in
+// `funcptr_two_targets.tnt`, with a sink of its own on both targets' formal `h` besides.
+//
+// The sinks in `sink_a` and `sink_b` are anchored at calls inside the targets, so the flow to
+// each enters one target at the indirect call. The sink on `h` is anchored at the indirect call
+// in `main` itself: an endpoint at a call site with two callees, which names neither one.
+
+def sink_a(v) {
+start:
+  sink(v, Height);
+  return;
+}
+
+def sink_b(v) {
+start:
+  sink(v, Height);
+  return;
+}
+
+def get_a(im shared, h):1 {
+start:
+  sink(h, Height);
+  sink_a(h);
+  return h;
+}
+
+def get_b(im shared, h):1 {
+start:
+  sink(h, Height);
+  sink_b(h);
+  return h;
+}
+
+def main() {
+start:
+  h = source(Height);
+  goto a, b;
+a:
+  im.get = ptr<get_a>;
+  goto call;
+b:
+  im.get = ptr<get_b>;
+  goto call;
+call:
+  f = im.get;
+  r = f(im, h);
+  return;
+}

@@ -110,7 +110,7 @@ fn index_and_query(
 ) -> Vec<Value> {
     cli::index(project, &[], models, false, cli::IndexOptions::default()).expect("indexing");
     let sarif: PathBuf = store_dir().join(format!("{}.sarif", project.name));
-    cli::query(
+    crate::common::query(
         project,
         &[query_models.to_path_buf()],
         &sarif,

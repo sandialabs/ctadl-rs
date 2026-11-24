@@ -134,7 +134,7 @@ fn test_cli_query_c_sources_and_sinks() {
 
         let out_dir = tempdir().unwrap();
         let sarif = out_dir.path().join("out.sarif");
-        cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
+        crate::common::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
 
         let text = std::fs::read_to_string(&sarif).unwrap();
         let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -258,7 +258,7 @@ fn test_cli_query_each_path_result_carries_only_its_flow() {
 
         let out_dir = tempdir().unwrap();
         let sarif = out_dir.path().join("out.sarif");
-        cli::query(&project, &[], &sarif, SarifProfile::default(), None).unwrap();
+        crate::common::query(&project, &[], &sarif, SarifProfile::default(), None).unwrap();
 
         let text = std::fs::read_to_string(&sarif).unwrap();
         let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -808,7 +808,7 @@ fn run_android_icc_flow_case(name: &str, manifest: &str, app_source: &str, sink_
     );
 
     let sarif = dir.path().join("out.sarif");
-    cli::query(&project, &[model], &sarif, SarifProfile::default(), None).unwrap();
+    crate::common::query(&project, &[model], &sarif, SarifProfile::default(), None).unwrap();
 
     let text = std::fs::read_to_string(&sarif).unwrap();
     let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -1061,7 +1061,7 @@ fn test_cli_query_c_no_callsite_smear() {
 
         let out_dir = tempdir().unwrap();
         let sarif = out_dir.path().join("out.sarif");
-        cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
+        crate::common::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
 
         let text = std::fs::read_to_string(&sarif).unwrap();
         let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -1126,7 +1126,7 @@ fn c_sinks_reached(stem: &str, index_models: &[PathBuf]) -> std::collections::BT
 
     let out_dir = tempdir().unwrap();
     let sarif = out_dir.path().join("out.sarif");
-    cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
+    crate::common::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
     let doc: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&sarif).unwrap()).unwrap();
     doc["runs"][0]["results"]
@@ -1545,7 +1545,7 @@ fn diff_query_file() -> &'static PathBuf {
         crate::common::store_dir();
         let project = index_xfer_project("diff_query_xfer", "diff_query_xfer_proj");
         let sarif = project.dir().join("diff_query.sarif");
-        cli::query(
+        crate::common::query(
             &project,
             &[c_fixture("xfer.json")],
             &sarif,
@@ -2074,7 +2074,7 @@ fn test_cli_query_c_pointer_field_without_models() {
 
         let out_dir = tempdir().unwrap();
         let sarif = out_dir.path().join("out.sarif");
-        cli::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
+        crate::common::query(&project, &models, &sarif, SarifProfile::default(), None).unwrap();
 
         let text = std::fs::read_to_string(&sarif).unwrap();
         let doc: serde_json::Value = serde_json::from_str(&text).unwrap();

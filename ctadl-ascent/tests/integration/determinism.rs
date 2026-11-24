@@ -185,7 +185,7 @@ fn run_pipeline(out: &Path) {
         (SarifProfile::Debug, "debug"),
     ] {
         let taint_dot = out.join(format!("taint-{name}.dot"));
-        cli::query(
+        crate::common::query(
             &project,
             &models,
             &out.join(format!("{name}.sarif")),

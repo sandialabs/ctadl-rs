@@ -113,3 +113,101 @@ pub fn without_context(e: ctadl_ascent::error::Error) -> ctadl_ascent::error::Er
         e => e,
     }
 }
+
+/// [`cli::query`](ctadl_ascent::cli::query), then, when it wrote `output`, the check of every
+/// step of every code flow in it ([`step_properties_problem`]). Every test in this binary
+/// queries through this, so a step that says the wrong thing fails the test that wrote it.
+pub fn query(
+    project: &ctadl_ascent::project::AnalysisProject,
+    models: &[PathBuf],
+    output: &Path,
+    profile: ctadl_ascent::query_engine::formatter::SarifProfile,
+    dump_taint_graph: Option<&Path>,
+) -> Result<ctadl_ascent::cli::QueryStatus, ctadl_ascent::error::Error> {
+    let status = ctadl_ascent::cli::query(project, models, output, profile, dump_taint_graph);
+    if output.is_file() {
+        let text = std::fs::read_to_string(output).expect("reading the SARIF query wrote");
+        let doc: serde_json::Value =
+            serde_json::from_str(&text).expect("parsing the SARIF query wrote");
+        if let Some(problem) = step_properties_problem(&doc) {
+            panic!("{}: {problem}", output.display());
+        }
+    }
+    status
+}
+
+/// What is wrong with the first code-flow step of `sarif` that does not say what it should,
+/// or `None` when every step does. A step has a string `taintVertex`, and its message is
+/// `<word> <taintVertex> in <function>`. A source or sink step, told by its message's first
+/// word, has neither `callee` nor `summarized`; every other step has exactly one: `callee`, a
+/// string, or `summarized`, `true`.
+///
+/// `xtask`'s regression suite has the same check (`check_step_properties`), for the flows it
+/// queries.
+pub fn step_properties_problem(sarif: &serde_json::Value) -> Option<String> {
+    use serde_json::Value;
+    let items = |v: &Value, key: &str| -> Vec<Value> {
+        v.get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    for (r, run) in items(sarif, "runs").iter().enumerate() {
+        for (n, result) in items(run, "results").iter().enumerate() {
+            let rule = result.get("ruleId").and_then(Value::as_str).unwrap_or("");
+            for (c, flow) in items(result, "codeFlows").iter().enumerate() {
+                for (t, thread) in items(flow, "threadFlows").iter().enumerate() {
+                    for (s, step) in items(thread, "locations").iter().enumerate() {
+                        let message = step
+                            .pointer("/location/message/text")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if let Some(problem) = step_problem(step, message) {
+                            return Some(format!(
+                                "run {r}, result {n} ({rule}), code flow {c}, thread flow {t}, \
+                                 step {s} ({message:?}): {problem}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// What is wrong with one step whose message is `message`, or `None`.
+fn step_problem(step: &serde_json::Value, message: &str) -> Option<String> {
+    use serde_json::Value;
+    let props = step.get("properties");
+    let prop = |key: &str| props.and_then(|p| p.get(key));
+    let Some(vertex) = prop("taintVertex").and_then(Value::as_str) else {
+        return Some("no string taintVertex".to_string());
+    };
+    let Some((word, rest)) = message.split_once(' ') else {
+        return Some("the message has no vertex".to_string());
+    };
+    if !rest
+        .strip_prefix(vertex)
+        .is_some_and(|tail| tail.starts_with(" in "))
+    {
+        return Some(format!(
+            "the message does not name taintVertex {vertex:?} as `{word} {vertex} in ...`"
+        ));
+    }
+    let callee = prop("callee");
+    let summarized = prop("summarized");
+    if matches!(word, "source" | "sink") {
+        if callee.is_some() || summarized.is_some() {
+            return Some(format!("a {word} step has callee or summarized"));
+        }
+        return None;
+    }
+    match (callee, summarized) {
+        (Some(Value::String(_)), None) | (None, Some(Value::Bool(true))) => None,
+        (Some(_), Some(_)) => Some("both callee and summarized".to_string()),
+        (None, None) => Some("neither callee nor summarized".to_string()),
+        (Some(c), None) => Some(format!("callee {c} is not a string")),
+        (None, Some(s)) => Some(format!("summarized {s} is not true")),
+    }
+}

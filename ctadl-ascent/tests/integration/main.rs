@@ -25,5 +25,6 @@ mod multi_import_sarif;
 mod port_semantics;
 mod reference_parity;
 mod sarif_uris;
+mod step_props;
 mod store_relocation;
 mod xapk_bundle;

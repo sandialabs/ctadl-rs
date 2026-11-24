@@ -123,7 +123,8 @@ fn flows(case: &str, store: &str, index_model: &str, probe: &str) -> bool {
     .expect("indexing");
 
     let sarif: PathBuf = dir.join(format!("{case}.sarif"));
-    cli::query(&project, &[query_models], &sarif, SarifProfile::Human, None).expect("querying");
+    crate::common::query(&project, &[query_models], &sarif, SarifProfile::Human, None)
+        .expect("querying");
 
     let text = std::fs::read_to_string(&sarif).expect("reading sarif");
     let value: serde_json::Value = serde_json::from_str(&text).expect("parsing sarif");

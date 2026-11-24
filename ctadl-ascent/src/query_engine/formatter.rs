@@ -2792,9 +2792,10 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         // previous step's location. An `endpoint` step (`source ...`/`sink ...`) is deduped
         // only against a step at the same instruction: a source-level location can be a
         // whole statement (a CIL sequence point), so in `Sink(F(Source()))` every call has
-        // the one location, and deduping by it alone would drop the sink step. `message`
-        // describes the step (the full vertex — variable *and* path — its function,
-        // and the edge kind); `kinds` are the
+        // the one location, and deduping by it alone would drop the sink step. The message,
+        // `<word> <vertex> in <function>`, and the step's properties are both rendered from
+        // `step`, so they cannot disagree about the vertex; whether the step is written does
+        // not depend on it. `kinds` are the
         // SARIF well-known step categories (`call`/`return`/`taint`); `exec_order` is
         // bumped so every emitted step carries its temporal order.
         let push_site_step = |thread_flow_locations: &mut Vec<ThreadFlowLocation>,
@@ -2804,7 +2805,8 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                               site: &InsnSiteId,
                               endpoint: bool,
                               kinds: Vec<String>,
-                              message: String| {
+                              word: &str,
+                              step: FlowStep| {
             let Some(loc) = source_data
                 .all_locations
                 .get(&(site.func_id.id, site.insn_id.id))
@@ -2850,6 +2852,19 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             *last_loc_id = current_loc_id;
             *last_site = current_site;
             *exec_order += 1;
+            let vertex = vertex_text(&step.var, &step.path);
+            let message = format!("{word} {vertex} in {}", fname(step.named));
+            let mut properties =
+                BTreeMap::from([("taintVertex".to_string(), serde_json::json!(vertex))]);
+            match step.callee {
+                StepCallee::Endpoint => {}
+                StepCallee::Named(f) => {
+                    properties.insert("callee".to_string(), serde_json::json!(fname(f)));
+                }
+                StepCallee::Summarized => {
+                    properties.insert("summarized".to_string(), serde_json::json!(true));
+                }
+            }
             let mut loc_with_msg = loc.clone();
             loc_with_msg.message = Some(Message::builder().text(message).build());
             thread_flow_locations.push(
@@ -2857,6 +2872,11 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     .location(loc_with_msg)
                     .execution_order(*exec_order)
                     .kinds(kinds)
+                    .properties(
+                        PropertyBag::builder()
+                            .additional_properties(properties)
+                            .build(),
+                    )
                     .build(),
             );
         };
@@ -2867,7 +2887,6 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         // would otherwise be absent from the code flow.
         for (src, _sink, _lbl) in details {
             if let Some(site) = src.call_site.and_then(|p| InsnSiteId::try_from(&p).ok()) {
-                let callee = endpoint_callee(src, &site_callees);
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
@@ -2876,12 +2895,13 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     &site,
                     true,
                     vec!["taint".to_string()],
-                    format!(
-                        "source {}{} in {}",
-                        src.vertex.0,
-                        src.vertex.1.to_dot_string(),
-                        fname(callee)
-                    ),
+                    "source",
+                    FlowStep {
+                        var: src.vertex.0,
+                        path: src.vertex.1,
+                        callee: StepCallee::Endpoint,
+                        named: endpoint_callee(src, &site_callees),
+                    },
                 );
             }
         }
@@ -2916,14 +2936,20 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
         // a graph edge, and `site_by_edge` gives the call instruction that edge
         // flowed through. Attributing per edge keeps each call site distinct even
         // when the same variable participates in several calls.
-        for window in path.windows(2) {
+        for (i, window) in path.windows(2).enumerate() {
             let (src_id, dst_id) = (window[0], window[1]);
             if let Some(site) = site_by_edge.get(&(src_id, dst_id)) {
                 let dst_node = &id_to_node[dst_id as usize];
-                let kind = match edge_by_edge.get(&(src_id, dst_id)) {
-                    Some(FlowEdge::Call(_)) => "call",
-                    Some(FlowEdge::Return(_)) => "return",
-                    _ => "taint",
+                // Only a call or a return edge has a site. Another edge with the same two ends
+                // would replace its kind here only by coming later in the edge list, which is
+                // sorted by kind: an intra edge comes before it, a global edge has a global at
+                // one end, and a call edge (call-arg to formal) and a return edge (formal to
+                // call-arg) never share both.
+                let (kind, callee) = match edge_by_edge.get(&(src_id, dst_id)) {
+                    Some(FlowEdge::Call(_)) => ("call", dst_node.0),
+                    // The function returned from; the message names the one returned into.
+                    Some(FlowEdge::Return(_)) => ("return", id_to_node[src_id as usize].0),
+                    other => unreachable!("an edge with a call site is {other:?}"),
                 };
                 push_site_step(
                     &mut thread_flow_locations,
@@ -2933,13 +2959,13 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     site,
                     false,
                     vec![kind.to_string()],
-                    format!(
-                        "{} {}{} in {}",
-                        kind,
-                        dst_node.1,
-                        dst_node.2.to_dot_string(),
-                        fname(dst_node.0)
-                    ),
+                    kind,
+                    FlowStep {
+                        var: dst_node.1,
+                        path: dst_node.2,
+                        callee: StepCallee::Named(callee),
+                        named: dst_node.0,
+                    },
                 );
             }
             // A summarized callee contributes no Call/Return edge, so its call line
@@ -2955,17 +2981,33 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             // final sink, and surfacing those would both pre-empt that sink's
             // `sink ...` step and, in a case whose point is a *clean* sibling sink,
             // wrongly report its line.
+            //
+            // The path leaves the call-arg vertex either by a call edge, entering that edge's
+            // callee, or by an edge that stands for the call's effect (a summary or a model,
+            // to another argument of the call or to a global), entering none.
             let dst_node = &id_to_node[dst_id as usize];
             if !endpoint_node_ids.contains(&dst_id)
                 && let Some(site) = call_arg_site(dst_node)
                 && !endpoint_sites.contains(&(site.func_id, site.insn_id))
             {
-                let callee = InsnSiteId::new(site.func_id, site.insn_id)
-                    .try_into()
-                    .ok()
-                    .and_then(|packed| site_callees.get(&packed))
-                    .and_then(|callees| callees.first().copied())
-                    .unwrap_or(dst_node.0);
+                let entered =
+                    path.get(i + 2)
+                        .and_then(|&next| match edge_by_edge.get(&(dst_id, next)) {
+                            Some(FlowEdge::Call(_)) => Some(id_to_node[next as usize].0),
+                            _ => None,
+                        });
+                let (callee, named) = match entered {
+                    Some(f) => (StepCallee::Named(f), f),
+                    None => (
+                        StepCallee::Summarized,
+                        InsnSiteId::new(site.func_id, site.insn_id)
+                            .try_into()
+                            .ok()
+                            .and_then(|packed| site_callees.get(&packed))
+                            .and_then(|callees| callees.first().copied())
+                            .unwrap_or(dst_node.0),
+                    ),
+                };
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
@@ -2974,12 +3016,13 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     &site,
                     false,
                     vec!["call".to_string()],
-                    format!(
-                        "call {}{} in {}",
-                        dst_node.1,
-                        dst_node.2.to_dot_string(),
-                        fname(callee)
-                    ),
+                    "call",
+                    FlowStep {
+                        var: dst_node.1,
+                        path: dst_node.2,
+                        callee,
+                        named,
+                    },
                 );
             }
         }
@@ -2988,7 +3031,6 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             if let Some(s) = sink.as_ref()
                 && let Some(site) = s.call_site.and_then(|p| InsnSiteId::try_from(&p).ok())
             {
-                let callee = endpoint_callee(s, &site_callees);
                 push_site_step(
                     &mut thread_flow_locations,
                     &mut last_loc_id,
@@ -2997,12 +3039,13 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
                     &site,
                     true,
                     vec!["taint".to_string()],
-                    format!(
-                        "sink {}{} in {}",
-                        s.vertex.0,
-                        s.vertex.1.to_dot_string(),
-                        fname(callee)
-                    ),
+                    "sink",
+                    FlowStep {
+                        var: s.vertex.0,
+                        path: s.vertex.1,
+                        callee: StepCallee::Endpoint,
+                        named: endpoint_callee(s, &site_callees),
+                    },
                 );
             }
         }
@@ -3040,7 +3083,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             if let Some(details) = ctx.details_by_span.get(span_key) {
                 for (lbl, _func_id, var, pth) in details {
                     all_labels.insert(lbl.clone());
-                    let vertex = format!("{}{}", var, pth.to_dot_string());
+                    let vertex = vertex_text(var, pth);
                     labels_to_vertices
                         .entry(lbl.to_string())
                         .or_default()
@@ -3175,7 +3218,7 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
             let mut labels_to_vertices: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
             if let Some(details) = ctx.details_by_span.get(&span_key) {
                 for (lbl, _func_id, var, pth) in details {
-                    let vertex = format!("{}{}", var, pth.to_dot_string());
+                    let vertex = vertex_text(var, pth);
                     labels_to_vertices
                         .entry(lbl.to_string())
                         .or_default()
@@ -3270,6 +3313,35 @@ async fn format_source_info_results<P: AsRef<path::Path>>(
     Ok((results, path_stats))
 }
 
+/// A vertex as it is written: its variable, then its access path (`call-arg(3, 0).foo`). A
+/// step's message and its `taintVertex`, and the `taintVertex` of a source or sink result, are
+/// this text.
+fn vertex_text(var: &FlowVariable, path: &Path) -> String {
+    format!("{var}{}", path.to_dot_string())
+}
+
+/// A code-flow step before it is written: the one vertex it is at, what it says about the
+/// callee of its call, and the function its message names.
+struct FlowStep {
+    var: FlowVariable,
+    path: Path,
+    callee: StepCallee,
+    named: FunctionId,
+}
+
+/// What a code-flow step says about the callee of the call it is at.
+enum StepCallee {
+    /// A source or sink step says nothing: every callee of its call site is in its result's
+    /// `sourceFunctions` or `sinkFunctions`.
+    Endpoint,
+    /// `callee`: the function the path enters at the call, or, on a return step, the one it
+    /// returns from.
+    Named(FunctionId),
+    /// `summarized: true`: the path crosses the call by its effect (a summary or a model)
+    /// without entering a callee, so no callee is named.
+    Summarized,
+}
+
 /// Each call site's callees in the final call graph, sorted by the name that is written and
 /// then deduplicated by it, so the order depends on the program's names, not on its function
 /// ids or the order of the call list. A function with no name sorts as `func#<id>`, the text a
@@ -3355,7 +3427,7 @@ fn format_source_sink_results(
             // separate sources they are, instead of collapsing to identical
             // "formal(1) in function main" lines. The label (taint kind) is the
             // other distinguishing field; carry it in `properties` below.
-            let vertex = format!("{}{}", node.1, node.2.to_dot_string());
+            let vertex = vertex_text(&node.1, &node.2);
             // Name the source/sink by the framework method it models (a callee
             // at its anchored call site, the first by name), not the caller `infunc` holds.
             let callee_id = endpoint_callee(endpoint, site_callees);
