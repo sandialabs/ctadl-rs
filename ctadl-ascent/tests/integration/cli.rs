@@ -294,7 +294,7 @@ fn test_cli_query_each_path_result_carries_only_its_flow() {
                 .into_iter()
                 .find(|s| last.contains(s))
                 .unwrap_or_else(|| panic!("last step names no sink: {last}"));
-            let callee = result["properties"]["sinkCallee"].as_str().unwrap();
+            let callee = result["properties"]["sinkFunctions"][0].as_str().unwrap();
             assert!(
                 callee.contains(sink),
                 "result names sink {callee} but its flow ends at {last}"
