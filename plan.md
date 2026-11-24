@@ -29,7 +29,7 @@ then moves those tests onto the real output. Phases 1 and 4 both edit
 `ctadl-query-diff/src/parse.rs` and `render.rs`, and phases 4 and 6 both edit
 `ctadl-ascent/tests/integration/diff_query.rs`; each pair is in different waves. In wave 2,
 phase 2 owns `sarif-canon`, phase 4 owns `ctadl-query-diff` and `diff_query.rs`, and phase 5
-owns the formatter.
+owns the formatter, `xtask` and the rest of `ctadl-ascent/tests/integration`.
 
 Test commands used throughout:
 
@@ -221,7 +221,7 @@ files with a step `summarized`; `ctadl query` writes none before phase 5.
 **Gate.** `cargo fmt --all -- --check`; `cargo clippy --workspace -- -Dwarnings`;
 `cargo test --workspace`; `git diff --stat <phase 1 commit> -- sarif-canon` is empty.
 
-## Phase 5: `ctadl query` writes step properties (R1–R5, R7, R8, D1)
+## Phase 5: `ctadl query` writes step properties (R1–R5, R7, R8, R18, R19, D1)
 
 Depends on: 3.
 
@@ -251,34 +251,68 @@ and `executionOrder` do not change: the dedup test does not read the new value.
   `(dst_id, path[i + 2])`) is a call edge, the step is a call step: `callee` and the message
   name `id_to_node[path[i + 2]].0`. Otherwise, or when there is no next window, it is a
   summarized step: `summarized: true`, and the message is what it was after phase 3.
-- New fixtures under `ctadl-ascent/tests/tnt/` (see Tests).
+- Two new fixtures under `ctadl-ascent/tests/tnt/` (see Tests). The Flowy tests run every
+  `.tnt` file there (`ctadl-ascent/tests/integration/flowy_tests.rs:89`), so each must pass
+  as one. No existing fixture is edited.
 - New `ctadl-ascent/tests/integration/step_props.rs`, and its `mod` line in
   `ctadl-ascent/tests/integration/main.rs:14`.
+- The check of every flow (R19). For every step of every flow of a SARIF file:
+  `properties.taintVertex` is a string, and the message is
+  `<word> <taintVertex> in <function>`; when `<word>` is `source` or `sink` the step has
+  neither `callee` nor `summarized`; otherwise it has exactly one of `callee`, a string, and
+  `summarized`, `true`. It returns what is wrong with the first step that fails, naming the
+  result and the step.
+  - `xtask/src/assertions.rs` — `check_step_properties`, shaped as `check_unexpected_lines`
+    (`:90`) is. `xtask/src/regression.rs:1310`, `:1655`, `:1881`, `:2539`, `:2666` — each
+    pass criterion calls it on the human-profile SARIF where it calls
+    `codeflow_connects_source_and_sink`, and fails the case with its text.
+  - `ctadl-ascent/tests/integration/common.rs` — the same check, and
+    `query`, with the signature of `cli::query` (`ctadl-ascent/src/cli/mod.rs:971`): it
+    calls `cli::query`, and when that wrote the output file, panics with what the check
+    reports. Every `cli::query(` in `ctadl-ascent/tests/integration` becomes
+    `common::query(`, in `bridging_end_to_end.rs`, `cli.rs`, `determinism.rs`,
+    `global_ports.rs`, `jni_summary.rs`, `multi_import_sarif.rs`, `port_semantics.rs`,
+    `sarif_uris.rs` and the new `step_props.rs`. Not `diff_query.rs:50`: phase 4 owns that
+    file in this wave, and phase 6 changes it.
 
 **Tests.** In `step_props.rs`, each on SARIF from `cli::query` in the `human` profile, the
 way `cli.rs:223` runs a `.tnt` fixture:
-- `call_step_names_the_function_entered` — fixture `step_props_two_callees.tnt`: one
-  indirect call that resolves to `get_a` and `get_b` (as
-  `ctadl-ascent/tests/tnt/funcptr_two_targets.tnt` does), with the sink one call further
-  down in each. The flow into `sink_a` has a step at the indirect call with
-  `callee == "get_a"` whose message ends ` in get_a`; the flow into `sink_b` has
-  `"get_b"`. Neither has `summarized`.
-- `return_step_names_the_function_returned_from` — a source inside a callee whose value
-  returns to the caller and reaches a sink there: the `return` step's `callee` is the
-  callee, and its message ends with the caller.
-- `summarized_step_between_arguments` — a call that copies one argument to another, crossed
-  by a summary (C's `xfer.c` shape, in `.tnt`): the step has `summarized: true`, no
-  `callee`.
-- `summarized_step_into_global` — a callee that writes its argument to a global a sink reads:
-  the step at the call has `summarized: true`, no `callee`.
-- `endpoint_step_at_two_callees` — in `step_props_two_callees.tnt`, a sink directly on the
-  formal of both targets is anchored at the indirect call: its step has `taintVertex` only,
-  its message names `get_a`, and the result's `sinkFunctions` is `["get_a", "get_b"]`.
-- `every_step_has_a_vertex_and_interior_steps_say_callee` — over every flow of every fixture
-  above and of `ctadl-ascent/tests/c/ties.c`: each step's `taintVertex` is the vertex in its
-  message; each step whose message does not start with `source ` or `sink ` has exactly one
-  of `callee` (a string) and `summarized` (`true`); each source or sink step has neither.
-- `machine_profile_has_no_steps` — the `machine` profile of the two-callee fixture has no
+- `call_step_names_the_function_entered` — existing fixture
+  `ctadl-ascent/tests/tnt/funcptr_two_targets.tnt`: one indirect call (`:45`) that resolves
+  to `get_a` and `get_b`, with the sink one call further down in each. The flow into
+  `sink_a` has a step at the indirect call with `callee == "get_a"` whose message ends
+  ` in get_a`; the flow into `sink_b` has `"get_b"`. Neither has `summarized`. (Before this
+  phase both messages name one of the two.)
+- `return_step_names_the_function_returned_from` — existing fixture
+  `ctadl-ascent/tests/tnt/callsite_paths.tnt`: the source is inside `src`, whose value
+  returns to `main` and reaches a sink there. Each of its two flows has a `return` step
+  (`:35`, `:37`) with `callee == "src"` whose message ends ` in main`.
+- `summarized_step_between_arguments` — existing fixture `ctadl-ascent/tests/tnt/ex4.tnt`:
+  `A(x, y)` (`:4`) carries `x.bar` to `y.foo`, and the flow has one step, at that call, and
+  none at the calls inside `A`. The step has `summarized: true`, no `callee`, and its
+  message ends ` in A`.
+- `summarized_step_into_global` — new fixture `step_props_global.tnt`: a callee that writes
+  its argument to a global, which a sink in the caller reads after the call. The step at the
+  call has `summarized: true`, no `callee`. Give the sink a call site (a sink on a callee's
+  formal, as `snk` in `callsite_paths.tnt`): a flow with no step has no `codeFlows`, which is
+  what `global_call_boundary.tnt` gives.
+- `endpoint_step_at_two_callees` — new fixture `step_props_two_callees.tnt`: the program of
+  `funcptr_two_targets.tnt`, and also a sink directly on the formal of both targets, which
+  that fixture leaves out on purpose. That sink is anchored at the indirect call: its step
+  has `taintVertex` only, its message names `get_a`, and the result's `sinkFunctions` is
+  `["get_a", "get_b"]`. The flows into `sink_a` and `sink_b` stay, so phase 6 renumbers a
+  call step's `callee` with this fixture too.
+- A `.tnt` `source(...)` gives no source step (no existing fixture's flow has one), so the
+  endpoint step these tests see is a sink's.
+- `check_rejects_a_bad_step` — the check of `common.rs` on the SARIF of
+  `step_props_two_callees.tnt`,
+  edited as JSON, reports: a call step given `summarized` too; a call step with its `callee`
+  removed; a sink step given a `callee`; a step whose `taintVertex` is changed. It reports
+  nothing on the file as written. The same four edits, on a small SARIF literal, in a unit
+  test of `check_step_properties` in `xtask/src/assertions.rs`.
+- Every other test above, and every existing integration test that queries, now runs the
+  check through `common::query`.
+- `machine_profile_has_no_steps` — the `machine` profile of `step_props_two_callees.tnt` has no
   `codeFlows`.
 - Existing, still passing: `cargo test --workspace`, including `diff_query.rs` unchanged
   (`with_step_props` still overwrites each step's bag; `taintVertex` and `callee` are
@@ -289,17 +323,22 @@ way `cli.rs:223` runs a `.tnt` fixture:
   with several callees. List every file that differs and why.
 
 **Gate.** `cargo fmt --all -- --check`; `cargo clippy --workspace -- -Dwarnings`;
-`cargo test --workspace`; `cargo xtask regression`; the comparison with the baseline SARIF.
+`cargo test --workspace`; `cargo xtask regression`, which now checks every flow of every
+case; the comparison with the baseline SARIF;
+`grep -rn 'cli::query(' ctadl-ascent/tests/integration` finds `common.rs` and
+`diff_query.rs:50` only.
 
-## Phase 6: the metamorphic tests run on real properties (R15, R17, D4)
+## Phase 6: the metamorphic tests run on real properties (R15, R17, R19, D4)
 
 Depends on: 4, 5.
 
 **What.** `with_step_props` and the "with step properties" base go; the SARIF `ctadl query`
-wrote is the only base. A second fixture, the two-callee program of phase 5, is indexed twice
+wrote is the only base. A second fixture, phase 5's `step_props_two_callees.tnt`, is indexed twice
 with the two callees' function ids in opposite orders. Tests only.
 
 **Files.**
+- `diff_query.rs:50` — `query_all` queries through `common::query`, so every profile of
+  `ties.c`, of its renumbered index and of the two-callee fixture is checked (R19).
 - `ctadl-ascent/tests/integration/diff_query.rs:199`–`:246` — delete `with_step_props`,
   `Base::step_props` and the second base; `bases` returns the real file. Restate the module
   comment (`:9`–`:13`).
@@ -338,9 +377,9 @@ with the two callees' function ids in opposite orders. Tests only.
 **Gate.** `cargo fmt --all -- --check`; `cargo clippy --workspace -- -Dwarnings`;
 `cargo test --workspace`;
 `grep -n 'with_step_props\|step_props:' ctadl-ascent/tests/integration/diff_query.rs` finds
-nothing.
+nothing; `grep -rn 'cli::query(' ctadl-ascent/tests/integration` finds `common.rs` only.
 
-## Phase 7: documents and acceptance (R19)
+## Phase 7: documents and acceptance (R20)
 
 Depends on: 2, 6.
 
@@ -387,10 +426,13 @@ finds no citation of this plan or the spec.
 | `ctadl-ascent/tests/integration/cli.rs` | reads `sinkFunctions` | 3 |
 | `ctadl-ascent/tests/integration/diff_query.rs` | renumbering loop; then real properties | 4, 6 |
 | `ctadl-ascent/tests/integration/step_props.rs`, `main.rs` | new tests | 5 |
-| `ctadl-ascent/tests/tnt/step_props_*.tnt` | new fixtures | 5 |
+| `ctadl-ascent/tests/integration/common.rs` | the check of every flow, and `query` | 5 |
+| the other files of `ctadl-ascent/tests/integration` that query | query through `common::query` | 5 |
+| `xtask/src/assertions.rs`, `regression.rs` | the check of every flow, in every pass criterion | 5 |
+| `ctadl-ascent/tests/tnt/step_props_global.tnt`, `step_props_two_callees.tnt` | new fixtures | 5 |
 | `docs/debugging.md`, `docs/spec.md`, `ctadl-ascent/src/main.rs` | documents, help text | 7 |
 
-Not touched: `xtask/src/assertions.rs` (its readers of message text stay);
+Not touched: the readers of message text in `xtask/src/assertions.rs`;
 `ctadl-ascent/src/query_engine/search.rs`; `ctadl-index`; `multiset-diff`, `order-laws`,
 `index-canon`; the signatures of `sarif-canon`'s theorems; `scripts/verus.sh`.
 
