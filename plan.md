@@ -105,6 +105,19 @@ goes through is admitted (`admit()`), and each admit is listed in the commit mes
 `cargo test --workspace`; `scripts/verus.sh .`;
 `git diff <phase 0 commit> -- sarif-canon/src/theorems.rs` changes no `theorem_` signature.
 
+**As built.**
+- Two admits, both in `sarif-canon/src/order.rs`:
+  - in `lemma_ord_step`, whose proof lists the step's fields without `summarized`;
+  - in `lemma_ord_result`, which exceeded Verus's resource limit once `ord_step` grew. It
+    is the one admit that is not in a proof about steps.
+- `summarized` is the last field of each step type, so the module comment in `order.rs` (records compare
+  field by field in declaration order) stays true. The order is `ord_opt_bool`, built from a
+  new `ord_bool`; `cmp_opt_bool` computes it and is proved, not admitted.
+- One more smoke test, `smoke_step_summarized_ordered`: absent before `false` before `true`,
+  and `callee` compared before `summarized`. The smoke builders take one more argument;
+  `none3` is generic.
+- Verus: 8, 31, 30, 228 verified (phase 0: 224 for `sarif-canon`).
+
 **Review.** The user checks the statements (the types, `spec_canon_step`, `ord_step`,
 `step_permuted`, `step_renumbered` and the smoke tests) against the spec before wave 2.
 
